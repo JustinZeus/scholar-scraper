@@ -1,0 +1,658 @@
+{
+  "fetch_records": [],
+  "generated_at_utc": "2026-02-16T18:21:42.721714+00:00",
+  "page_analyses": [
+    {
+      "field_presence": {
+        "authors_text": 0,
+        "citation_count": 0,
+        "cluster_id": 0,
+        "title": 0,
+        "venue_text": 0,
+        "year": 0
+      },
+      "marker_counts": {
+        "gs_gray": 0,
+        "gsc_a_ac": 0,
+        "gsc_a_at": 0,
+        "gsc_a_h": 0,
+        "gsc_a_tr": 0,
+        "gsc_a_y": 0,
+        "gsc_prf_in": 0,
+        "gsc_rsb_st": 0
+      },
+      "parse_warnings": [
+        "no_rows_detected"
+      ],
+      "profile_name": null,
+      "publication_count": 0,
+      "source": "profile_AAAAAAAAAAAA",
+      "status": "layout_changed"
+    },
+    {
+      "field_presence": {
+        "authors_text": 12,
+        "citation_count": 12,
+        "cluster_id": 12,
+        "title": 12,
+        "venue_text": 10,
+        "year": 11
+      },
+      "marker_counts": {
+        "gs_gray": 26,
+        "gsc_a_ac": 18,
+        "gsc_a_at": 15,
+        "gsc_a_h": 31,
+        "gsc_a_tr": 32,
+        "gsc_a_y": 26,
+        "gsc_prf_in": 17,
+        "gsc_rsb_st": 30
+      },
+      "parse_warnings": [],
+      "profile_name": "Doaa Elmatary",
+      "publication_count": 12,
+      "source": "profile_LZ5D_p4AAAAJ",
+      "status": "ok"
+    },
+    {
+      "field_presence": {
+        "authors_text": 5,
+        "citation_count": 5,
+        "cluster_id": 5,
+        "title": 5,
+        "venue_text": 5,
+        "year": 5
+      },
+      "marker_counts": {
+        "gs_gray": 14,
+        "gsc_a_ac": 11,
+        "gsc_a_at": 8,
+        "gsc_a_h": 17,
+        "gsc_a_tr": 25,
+        "gsc_a_y": 19,
+        "gsc_prf_in": 21,
+        "gsc_rsb_st": 30
+      },
+      "parse_warnings": [],
+      "profile_name": "WENRUI ZUO",
+      "publication_count": 5,
+      "source": "profile_P1RwlvoAAAAJ",
+      "status": "ok"
+    },
+    {
+      "field_presence": {
+        "authors_text": 20,
+        "citation_count": 20,
+        "cluster_id": 20,
+        "title": 20,
+        "venue_text": 19,
+        "year": 20
+      },
+      "marker_counts": {
+        "gs_gray": 42,
+        "gsc_a_ac": 26,
+        "gsc_a_at": 23,
+        "gsc_a_h": 47,
+        "gsc_a_tr": 40,
+        "gsc_a_y": 34,
+        "gsc_prf_in": 20,
+        "gsc_rsb_st": 30
+      },
+      "parse_warnings": [],
+      "profile_name": "K. Srinivasan",
+      "publication_count": 20,
+      "source": "profile_RxmmtT8AAAAJ",
+      "status": "ok"
+    },
+    {
+      "field_presence": {
+        "authors_text": 20,
+        "citation_count": 20,
+        "cluster_id": 20,
+        "title": 20,
+        "venue_text": 20,
+        "year": 20
+      },
+      "marker_counts": {
+        "gs_gray": 42,
+        "gsc_a_ac": 26,
+        "gsc_a_at": 23,
+        "gsc_a_h": 47,
+        "gsc_a_tr": 40,
+        "gsc_a_y": 34,
+        "gsc_prf_in": 21,
+        "gsc_rsb_st": 30
+      },
+      "parse_warnings": [],
+      "profile_name": "Bangar Raju Cherukuri",
+      "publication_count": 20,
+      "source": "profile_amIMrIEAAAAJ",
+      "status": "ok"
+    }
+  ],
+  "publications_by_source": {
+    "profile_AAAAAAAAAAAA": [],
+    "profile_LZ5D_p4AAAAJ": [
+      {
+        "authors_text": "EM Abd Allah, DE El-Matary, EM Eid, AST El Dien",
+        "citation_count": 25,
+        "cluster_id": "u-x6o8ySG0sC",
+        "title": "Performance comparison of various machine learning approaches to identify the best one in predicting heart disease",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:u-x6o8ySG0sC",
+        "venue_text": "Journal of Computer and Communications 10 (2), 1-18, 2022",
+        "year": 2022
+      },
+      {
+        "authors_text": "EAAA Hagras, D El-Saied, HH Aly",
+        "citation_count": 15,
+        "cluster_id": "YsMSGLbcyi4C",
+        "title": "Energy efficient key management scheme based on elliptic curve signcryption for wireless sensor networks",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:YsMSGLbcyi4C",
+        "venue_text": "2011 28th National Radio Science Conference (NRSC), 1-9, 2011",
+        "year": 2011
+      },
+      {
+        "authors_text": "EA Hagras, D El-Saied, HH Aly",
+        "citation_count": 6,
+        "cluster_id": "Y0pCki6q_DkC",
+        "title": "A new forward secure elliptic curve signcryption key management (fs-ecskm) scheme for heterogeneous wireless sensor networks",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:Y0pCki6q_DkC",
+        "venue_text": "International Journal of Computer Science and Technology 2 (2), 19-23, 2011",
+        "year": 2011
+      },
+      {
+        "authors_text": "DEE Matary, EA Hagras, HM Abdel-Kader",
+        "citation_count": 4,
+        "cluster_id": "d1gkVwhDpl0C",
+        "title": "Performance of polar codes for OFDM-based UWB channel",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:d1gkVwhDpl0C",
+        "venue_text": "Journal of Computer and Communications 6 (03), 102-117, 2018",
+        "year": 2018
+      },
+      {
+        "authors_text": "DEE Matary, EAA Hagras, HM Abdel-Kader",
+        "citation_count": 3,
+        "cluster_id": "u5HHmVD_uO8C",
+        "title": "Multi-user Communication Based OFDM-UWB System under Gaussian and Non-Gaussian Noisy Channel",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:u5HHmVD_uO8C",
+        "venue_text": "American Journal of Electrical and Electronic Engineering 5 (4), 136-143, 2017",
+        "year": 2017
+      },
+      {
+        "authors_text": "EAAA Hagras",
+        "citation_count": 2,
+        "cluster_id": "W7OEmFMy1HYC",
+        "title": "Doaa El-Saied, Dr. Hazem H. Aly,\u201cA New Forward Secure Elliptic Curve Signcryption Key Management (FS-ECSKM) Scheme for Heterogeneous Wireless Sensor Networks\u201d",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:W7OEmFMy1HYC",
+        "venue_text": "International Journal of Computer Science and Technology 2 (2), 19-23, 2011",
+        "year": 2011
+      },
+      {
+        "authors_text": "DE El-Matary, EAA Hagras, HM Abdel-Kader",
+        "citation_count": 1,
+        "cluster_id": "_FxGoFyzp5QC",
+        "title": "Performance Analysis of LDPC-IDMA-UWB Signals in Non-Gaussian Noisy Channel",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:_FxGoFyzp5QC",
+        "venue_text": null,
+        "year": 2013
+      },
+      {
+        "authors_text": "DE Elmatary",
+        "citation_count": 0,
+        "cluster_id": "ufrVoPGSRksC",
+        "title": "Intelligent Sign Multi-Language Real-Time Prediction System with Effective Data Preprocessing",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:ufrVoPGSRksC",
+        "venue_text": "Journal of Computer and Communications, 120-134, 2023",
+        "year": 2023
+      },
+      {
+        "authors_text": "E M AbdAllah, D E El Matary",
+        "citation_count": 0,
+        "cluster_id": "WF5omc3nYNoC",
+        "title": "Smart Healthcare System Based IoT with Frequency Analysis of Heart Rate Data across FFT Algorithmto be used During Covid-19 Pandemic",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:WF5omc3nYNoC",
+        "venue_text": "Engineering Research Journal (Shoubra) 51 (1), 88-94, 2022",
+        "year": 2022
+      },
+      {
+        "authors_text": "DE El Matary, EAA Hagras, HM Abdel-Kader",
+        "citation_count": 0,
+        "cluster_id": "9yKSN-GCB0IC",
+        "title": "Polar coded Interleave Division Multiple Access Ultra Wide Band (IDMA-UWB) communication system",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:9yKSN-GCB0IC",
+        "venue_text": "2018 35th National Radio Science Conference (NRSC), 283-292, 2018",
+        "year": 2018
+      },
+      {
+        "authors_text": "HMAK Doaa E.El-Matary, Esam A.A. Hagras",
+        "citation_count": 0,
+        "cluster_id": "zYLM7Y9cAGgC",
+        "title": "Performance Analysis of LDPC-IDMA-UWB Signals in Non-Gaussian Noisy Channel",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:zYLM7Y9cAGgC",
+        "venue_text": "International Journal of Scientific & Engineering Research, 2013",
+        "year": 2013
+      },
+      {
+        "authors_text": "DEE Matary, EAA Hagras, HM Abdel-Kader",
+        "citation_count": 0,
+        "cluster_id": "eQOLeE2rZwMC",
+        "title": "Non-Gaussian Noisy Channel Effect on Multi-user IDMA-UWB Communication System",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=LZ5D_p4AAAAJ&citation_for_view=LZ5D_p4AAAAJ:eQOLeE2rZwMC",
+        "venue_text": null,
+        "year": null
+      }
+    ],
+    "profile_P1RwlvoAAAAJ": [
+      {
+        "authors_text": "W Zuo, A Raman, RJ Mondrag\u00f3n, G Tyson",
+        "citation_count": 18,
+        "cluster_id": "u5HHmVD_uO8C",
+        "title": "Set in stone: Analysis of an immutable web3 social media platform",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=P1RwlvoAAAAJ&citation_for_view=P1RwlvoAAAAJ:u5HHmVD_uO8C",
+        "venue_text": "Proceedings of the ACM Web Conference 2023, 1865-1874, 2023",
+        "year": 2023
+      },
+      {
+        "authors_text": "W Zuo, RJ Mondragon, A Raman, G Tyson",
+        "citation_count": 10,
+        "cluster_id": "d1gkVwhDpl0C",
+        "title": "Understanding and improving content moderation in web3 platforms",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=P1RwlvoAAAAJ&citation_for_view=P1RwlvoAAAAJ:d1gkVwhDpl0C",
+        "venue_text": "Proceedings of the International AAAI Conference on Web and Social Media 18 \u2026, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "W Zuo, A Raman, RJ Mondrag\u00d3N, G Tyson",
+        "citation_count": 7,
+        "cluster_id": "u-x6o8ySG0sC",
+        "title": "A first look at user-controlled moderation on web3 social media: The case of memo. cash",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=P1RwlvoAAAAJ&citation_for_view=P1RwlvoAAAAJ:u-x6o8ySG0sC",
+        "venue_text": "Proceedings of the 3rd International Workshop on Open Challenges in Online \u2026, 2023",
+        "year": 2023
+      },
+      {
+        "authors_text": "Y Liu, RM Williams, G Xie, Y Wang, W Zuo",
+        "citation_count": 4,
+        "cluster_id": "9yKSN-GCB0IC",
+        "title": "Promoting the Culture of Qinhuai River Lantern Shadow Puppetry with a Digital Archive and Immersive Experience",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=P1RwlvoAAAAJ&citation_for_view=P1RwlvoAAAAJ:9yKSN-GCB0IC",
+        "venue_text": "arXiv preprint arXiv:2410.03532, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "W Zuo",
+        "citation_count": 0,
+        "cluster_id": "2osOgNQ5qMEC",
+        "title": "Understanding and Improving User-controlled Content Moderation Systems on Social Media",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=P1RwlvoAAAAJ&citation_for_view=P1RwlvoAAAAJ:2osOgNQ5qMEC",
+        "venue_text": "Queen Mary University of London, 2025",
+        "year": 2025
+      }
+    ],
+    "profile_RxmmtT8AAAAJ": [
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 1185,
+        "cluster_id": "qjMakFHDy7sC",
+        "title": "Black pepper and its pungent principle-piperine: a review of diverse physiological effects",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:qjMakFHDy7sC",
+        "venue_text": "Critical reviews in food science and nutrition 47 (8), 735-748, 2007",
+        "year": 2007
+      },
+      {
+        "authors_text": "K Platel, K Srinivasan",
+        "citation_count": 742,
+        "cluster_id": "W7OEmFMy1HYC",
+        "title": "Digestive stimulant action of spices: a myth or reality?",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:W7OEmFMy1HYC",
+        "venue_text": "Indian Journal of Medical Research 119 (5), 167, 2004",
+        "year": 2004
+      },
+      {
+        "authors_text": "K Platel, K Srinivasan",
+        "citation_count": 682,
+        "cluster_id": "u-x6o8ySG0sC",
+        "title": "Influence of dietary spices and their active principles on pancreatic digestive enzymes in albino rats",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:u-x6o8ySG0sC",
+        "venue_text": "Food/Nahrung 44 (1), 42-46, 2000",
+        "year": 2000
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 663,
+        "cluster_id": "LkGwnXOMwfcC",
+        "title": "Fenugreek (Trigonella foenum-graecum): A Review of Health Beneficial Physiological Effects",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:LkGwnXOMwfcC",
+        "venue_text": "Food reviews international 22 (2), 203-224, 2006",
+        "year": 2006
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 574,
+        "cluster_id": "FPJr55Dyh1AC",
+        "title": "Biological activities of red pepper (Capsicum annuum) and its pungent principle capsaicin: a review",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:FPJr55Dyh1AC",
+        "venue_text": "Critical reviews in food science and nutrition 56 (9), 1488-1500, 2016",
+        "year": 2016
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 555,
+        "cluster_id": "9yKSN-GCB0IC",
+        "title": "Plant foods in the management of diabetes mellitus: spices as beneficial antidiabetic food adjuncts",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:9yKSN-GCB0IC",
+        "venue_text": "International journal of food sciences and nutrition 56 (6), 399-414, 2005",
+        "year": 2005
+      },
+      {
+        "authors_text": "PS Babu, K Srinivasan",
+        "citation_count": 539,
+        "cluster_id": "ZfRJV9d4-WMC",
+        "title": "Hypolipidemic action of curcumin, the active principle of turmeric (Curcuma longa) in streptozotocin induced diabetic rats",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:ZfRJV9d4-WMC",
+        "venue_text": "Molecular and cellular biochemistry 166 (1), 169-175, 1997",
+        "year": 1997
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 513,
+        "cluster_id": "IjCSPb-OGe4C",
+        "title": "Spices as influencers of body metabolism: an overview of three decades of research",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:IjCSPb-OGe4C",
+        "venue_text": "Food Research International 38 (1), 77-86, 2005",
+        "year": 2005
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 455,
+        "cluster_id": "Tyk-4Ss8FVUC",
+        "title": "Role of spices beyond food flavoring: Nutraceuticals with multiple health effects",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:Tyk-4Ss8FVUC",
+        "venue_text": "Food reviews international 21 (2), 167-188, 2005",
+        "year": 2005
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 446,
+        "cluster_id": "tkaPQYYpVKoC",
+        "title": "Antioxidant potential of spices and their active constituents",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:tkaPQYYpVKoC",
+        "venue_text": "Critical Reviews in Food Science and Nutrition 54 (3), 252-272, 2013",
+        "year": 2013
+      },
+      {
+        "authors_text": "D Suresh, K Srinivasan",
+        "citation_count": 387,
+        "cluster_id": "5nxA0vEk-isC",
+        "title": "Tissue distribution and elimination of capsaicin, piperine & curcumin following oral intake in rats.",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:5nxA0vEk-isC",
+        "venue_text": "Indian Journal of Medical Research 131, 682-691, 2010",
+        "year": 2010
+      },
+      {
+        "authors_text": "R Ramakrishna Rao, K Platel, K Srinivasan",
+        "citation_count": 368,
+        "cluster_id": "YsMSGLbcyi4C",
+        "title": "In vitro influence of spices and spice\u2010active principles on digestive enzymes of rat pancreas and small intestine",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:YsMSGLbcyi4C",
+        "venue_text": "Food/Nahrung 47 (6), 408-412, 2003",
+        "year": 2003
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 367,
+        "cluster_id": "zCSUwVk65WsC",
+        "title": "Cumin (Cuminum cyminum) and black cumin (Nigella sativa) seeds: traditional uses, chemical constituents, and nutraceutical effects",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:zCSUwVk65WsC",
+        "venue_text": "Food quality and safety 2 (1), 1-16, 2018",
+        "year": 2018
+      },
+      {
+        "authors_text": "K Srinivasan",
+        "citation_count": 364,
+        "cluster_id": "yqoGN6RLRZoC",
+        "title": "Ginger rhizomes (Zingiber officinale): A spice with multiple health beneficial potentials",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:yqoGN6RLRZoC",
+        "venue_text": "PharmaNutrition 5 (1), 18-28, 2017",
+        "year": 2017
+      },
+      {
+        "authors_text": "K Platel, K Srinivasan",
+        "citation_count": 364,
+        "cluster_id": "d1gkVwhDpl0C",
+        "title": "Influence of dietary spices or their active principles on digestive enzymes of small intestinal mucosa in rats",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:d1gkVwhDpl0C",
+        "venue_text": "International Journal of Food Sciences and Nutrition 47 (1), 55-59, 1996",
+        "year": 1996
+      },
+      {
+        "authors_text": "K Platel, K Srinivasan",
+        "citation_count": 296,
+        "cluster_id": "UeHWp8X0CEIC",
+        "title": "Plant foods in the management of diabetes mellitus: vegetables as potential hypoglycaemic agents",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:UeHWp8X0CEIC",
+        "venue_text": "Food/Nahrung 41 (2), 68-74, 1997",
+        "year": 1997
+      },
+      {
+        "authors_text": "K Srinivasan, K Sambaiah",
+        "citation_count": 292,
+        "cluster_id": "2osOgNQ5qMEC",
+        "title": "The effect of spices on cholesterol 7\u03b1-hydroxylase activity and on serum and hepatic cholesterol levels in the rat.",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:2osOgNQ5qMEC",
+        "venue_text": null,
+        "year": 1991
+      },
+      {
+        "authors_text": "S Hemalatha, K Platel, K Srinivasan",
+        "citation_count": 269,
+        "cluster_id": "UebtZRa9Y70C",
+        "title": "Zinc and iron contents and their bioaccessibility in cereals and pulses consumed in India",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:UebtZRa9Y70C",
+        "venue_text": "Food chemistry 102 (4), 1328-1336, 2007",
+        "year": 2007
+      },
+      {
+        "authors_text": "K Platel, K Srinivasan",
+        "citation_count": 258,
+        "cluster_id": "_FxGoFyzp5QC",
+        "title": "Studies on the influence of dietary spices on food transit time in experimental rats",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:_FxGoFyzp5QC",
+        "venue_text": "Nutrition Research 21 (9), 1309-1314, 2001",
+        "year": 2001
+      },
+      {
+        "authors_text": "K Platel, K Srinivasan",
+        "citation_count": 240,
+        "cluster_id": "hCrLmN-GePgC",
+        "title": "Bioavailability of micronutrients from plant foods: an update",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=RxmmtT8AAAAJ&citation_for_view=RxmmtT8AAAAJ:hCrLmN-GePgC",
+        "venue_text": "Critical reviews in food science and nutrition 56 (10), 1608-1619, 2016",
+        "year": 2016
+      }
+    ],
+    "profile_amIMrIEAAAAJ": [
+      {
+        "authors_text": "BR Cherukuri, V Arulkumar",
+        "citation_count": 131,
+        "cluster_id": "u5HHmVD_uO8C",
+        "title": "Optimization of Data Structures and Trade-Offs with Concurrency Control in Multithread Software Structures Using Artificial Intelligence",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:u5HHmVD_uO8C",
+        "venue_text": "2024 IEEE International Conference on Computing, Power and Communication \u2026, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 81,
+        "cluster_id": "d1gkVwhDpl0C",
+        "title": "Development of Design Patterns with Adaptive User Interface for Cloud Native Microservice Architecture Using Deep Learning With IoT",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:d1gkVwhDpl0C",
+        "venue_text": "2024 IEEE International Conference on Computing, Power and Communication \u2026, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 33,
+        "cluster_id": "zYLM7Y9cAGgC",
+        "title": "AI-powered personalization: How machine learning is shaping the future of user experience",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:zYLM7Y9cAGgC",
+        "venue_text": "International Journal of Science and Research Archive (IJSRA) 12 (1), 3111\u20133126, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 30,
+        "cluster_id": "roLk4NBRz8UC",
+        "title": "Future of cloud computing: Innovations in multi-cloud and hybrid architectures",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:roLk4NBRz8UC",
+        "venue_text": "World Journal of Advanced Research and Reviews (WJARR) 1 (1), 068-081, 2019",
+        "year": 2019
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 27,
+        "cluster_id": "UebtZRa9Y70C",
+        "title": "Microservices and containerization: Accelerating web development cycles",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:UebtZRa9Y70C",
+        "venue_text": "World Journal of Advanced Research and Reviews (WJARR) 6 (01), 283-296, 2020",
+        "year": 2020
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 18,
+        "cluster_id": "hqOjcs7Dif8C",
+        "title": "Ethical AI in cloud: Mitigating risks in machine learning models",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:hqOjcs7Dif8C",
+        "venue_text": "World Journal of Advanced Engineering Technology and Sciences ((WJAETS) 1 \u2026, 2020",
+        "year": 2020
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 14,
+        "cluster_id": "0EnyYjriUFMC",
+        "title": "Quantum machine learning: Transforming cloud-based AI solutions",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:0EnyYjriUFMC",
+        "venue_text": "International Journal of Science and Research Archive (IJSRA) 1 (01), 110-122, 2020",
+        "year": 2020
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 13,
+        "cluster_id": "WF5omc3nYNoC",
+        "title": "Enhanced Trimodal Emotion Recognition Using Multibranch Fusion Attention with Epistemic Neural Networks and Fire Hawk Optimization",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:WF5omc3nYNoC",
+        "venue_text": "Journal of Machine and Computing 5 (1), 2025",
+        "year": 2025
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 13,
+        "cluster_id": "W7OEmFMy1HYC",
+        "title": "Containerization in cloud computing: comparing Docker and Kubernetes for scalable web applications",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:W7OEmFMy1HYC",
+        "venue_text": "International Journal of Science and Research Archive (IJSRA) 13 (1), 3302\u20133315, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 13,
+        "cluster_id": "IjCSPb-OGe4C",
+        "title": "Serverless computing: How to build and deploy applications without managing infrastructure",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:IjCSPb-OGe4C",
+        "venue_text": "World Journal of Advanced Engineering Technology and Sciences ((WJAETS) 11 \u2026, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 12,
+        "cluster_id": "YsMSGLbcyi4C",
+        "title": "Edge Computing vs. Cloud Computing: A Comparative Analysis for Real-Time AI Applications",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:YsMSGLbcyi4C",
+        "venue_text": "International Journal For Multidisciplinary Research (IJFMR) 6 (5), 1-17, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 9,
+        "cluster_id": "Se3iqnhoufwC",
+        "title": "Serverless revolution: Redefining application scalability and cost efficiency",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:Se3iqnhoufwC",
+        "venue_text": "World Journal of Advanced Research and Reviews (WJARR) 2 (03), 039-053, 2019",
+        "year": 2019
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 8,
+        "cluster_id": "Tyk-4Ss8FVUC",
+        "title": "Progressive Web Apps (PWAs): Enhancing User Experience through Modern Web Development",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:Tyk-4Ss8FVUC",
+        "venue_text": "International Journal of Science and Research (IJSR) 13 (10), 1550-1560, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 7,
+        "cluster_id": "UeHWp8X0CEIC",
+        "title": "Building Scalable Web Applications: Best Practices for Backend Architecture",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:UeHWp8X0CEIC",
+        "venue_text": "International Journal of Science and Research (IJSR) 13 (10), 126-139, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 5,
+        "cluster_id": "5nxA0vEk-isC",
+        "title": "Advanced Multi Class Cyber Security Attack Classification in IoT Based Wireless Sensor Networks Using Context Aware Depthwise Separable Convolutional Neural Network",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:5nxA0vEk-isC",
+        "venue_text": "Journal of Machine and Computing 5 (2), 2025",
+        "year": 2025
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 3,
+        "cluster_id": "u-x6o8ySG0sC",
+        "title": "Maintenance of Web Development Standard for Multiple Devices with Serverless Computing through Cross Browser Affinity Using Hybrid Optimization",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:u-x6o8ySG0sC",
+        "venue_text": "2024 IEEE International Conference on Computing, Power and Communication \u2026, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 3,
+        "cluster_id": "LkGwnXOMwfcC",
+        "title": "Developing Intelligent Chatbots for Real-Time Customer Support in E-Commerce",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:LkGwnXOMwfcC",
+        "venue_text": "International Journal of Science and Research (IJSR) 11 (01), 1709-1719, 2022",
+        "year": 2022
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 3,
+        "cluster_id": "_FxGoFyzp5QC",
+        "title": "Enhancing Web Application Performance with AI - Driven Optimization Techniques",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:_FxGoFyzp5QC",
+        "venue_text": "International Journal of Science and Research (IJSR) 10 (2), 1779-1788, 2021",
+        "year": 2021
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 1,
+        "cluster_id": "Y0pCki6q_DkC",
+        "title": "Federated Learning: Privacy-Preserving Machine Learning in Cloud Environments",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:Y0pCki6q_DkC",
+        "venue_text": "International Journal of Science and Research (IJSR) 13 (10), 1539-1549, 2024",
+        "year": 2024
+      },
+      {
+        "authors_text": "BR Cherukuri",
+        "citation_count": 1,
+        "cluster_id": "ufrVoPGSRksC",
+        "title": "Scalable machine learning model deployment using serverless cloud architectures",
+        "title_url": "/citations?view_op=view_citation&hl=en&user=amIMrIEAAAAJ&citation_for_view=amIMrIEAAAAJ:ufrVoPGSRksC",
+        "venue_text": "World Journal of Advanced Engineering Technology and Sciences ((WJAETS) 5 (1 \u2026, 2022",
+        "year": 2022
+      }
+    ]
+  },
+  "run_dir": "planning/scholar_probe_tmp/fixtures/run_20260216T182142Z"
+}

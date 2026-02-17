@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from sqlalchemy import Select, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import (
+    CrawlRun,
+    Publication,
+    RunStatus,
+    ScholarProfile,
+    ScholarPublication,
+)
+
+MODE_NEW = "new"
+MODE_ALL = "all"
+
+
+@dataclass(frozen=True)
+class PublicationListItem:
+    publication_id: int
+    scholar_profile_id: int
+    scholar_label: str
+    title: str
+    year: int | None
+    citation_count: int
+    venue_text: str | None
+    pub_url: str | None
+    is_read: bool
+    first_seen_at: datetime
+    is_new_in_latest_run: bool
+
+
+@dataclass(frozen=True)
+class UnreadPublicationItem:
+    publication_id: int
+    scholar_profile_id: int
+    scholar_label: str
+    title: str
+    year: int | None
+    citation_count: int
+    venue_text: str | None
+    pub_url: str | None
+
+
+def resolve_mode(value: str | None) -> str:
+    if value == MODE_ALL:
+        return MODE_ALL
+    return MODE_NEW
+
+
+async def get_latest_completed_run_id_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+) -> int | None:
+    result = await db_session.execute(
+        select(func.max(CrawlRun.id)).where(
+            CrawlRun.user_id == user_id,
+            CrawlRun.status != RunStatus.RUNNING,
+        )
+    )
+    latest_run_id = result.scalar_one_or_none()
+    return int(latest_run_id) if latest_run_id is not None else None
+
+
+def publications_query(
+    *,
+    user_id: int,
+    mode: str,
+    latest_run_id: int | None,
+    scholar_profile_id: int | None,
+    limit: int,
+) -> Select[tuple]:
+    scholar_label = ScholarProfile.display_name
+
+    stmt = (
+        select(
+            Publication.id,
+            ScholarProfile.id,
+            scholar_label,
+            ScholarProfile.scholar_id,
+            Publication.title_raw,
+            Publication.year,
+            Publication.citation_count,
+            Publication.venue_text,
+            Publication.pub_url,
+            ScholarPublication.is_read,
+            ScholarPublication.first_seen_run_id,
+            ScholarPublication.created_at,
+        )
+        .join(ScholarPublication, ScholarPublication.publication_id == Publication.id)
+        .join(ScholarProfile, ScholarProfile.id == ScholarPublication.scholar_profile_id)
+        .where(ScholarProfile.user_id == user_id)
+        .order_by(ScholarPublication.created_at.desc(), Publication.id.desc())
+        .limit(limit)
+    )
+    if scholar_profile_id is not None:
+        stmt = stmt.where(ScholarProfile.id == scholar_profile_id)
+    if mode == MODE_NEW:
+        # "New" means discovered in the latest completed run.
+        if latest_run_id is None:
+            stmt = stmt.where(False)
+        else:
+            stmt = stmt.where(ScholarPublication.first_seen_run_id == latest_run_id)
+    return stmt
+
+
+async def list_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    mode: str = MODE_ALL,
+    scholar_profile_id: int | None = None,
+    limit: int = 300,
+) -> list[PublicationListItem]:
+    resolved_mode = resolve_mode(mode)
+    latest_run_id = await get_latest_completed_run_id_for_user(
+        db_session,
+        user_id=user_id,
+    )
+    result = await db_session.execute(
+        publications_query(
+            user_id=user_id,
+            mode=resolved_mode,
+            latest_run_id=latest_run_id,
+            scholar_profile_id=scholar_profile_id,
+            limit=limit,
+        )
+    )
+
+    rows = result.all()
+    items: list[PublicationListItem] = []
+    for row in rows:
+        (
+            publication_id,
+            scholar_profile_id,
+            display_name,
+            scholar_id,
+            title_raw,
+            year,
+            citation_count,
+            venue_text,
+            pub_url,
+            is_read,
+            first_seen_run_id,
+            created_at,
+        ) = row
+        items.append(
+            PublicationListItem(
+                publication_id=int(publication_id),
+                scholar_profile_id=int(scholar_profile_id),
+                scholar_label=(display_name or scholar_id),
+                title=title_raw,
+                year=year,
+                citation_count=int(citation_count or 0),
+                venue_text=venue_text,
+                pub_url=pub_url,
+                is_read=bool(is_read),
+                first_seen_at=created_at,
+                is_new_in_latest_run=(
+                    latest_run_id is not None and int(first_seen_run_id or 0) == latest_run_id
+                ),
+            )
+        )
+    return items
+
+
+async def list_unread_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    limit: int = 100,
+) -> list[UnreadPublicationItem]:
+    result = await db_session.execute(
+        publications_query(
+            user_id=user_id,
+            mode=MODE_ALL,
+            latest_run_id=None,
+            scholar_profile_id=None,
+            limit=limit,
+        ).where(ScholarPublication.is_read.is_(False))
+    )
+    rows = result.all()
+    items: list[UnreadPublicationItem] = []
+    for row in rows:
+        (
+            publication_id,
+            scholar_profile_id,
+            display_name,
+            scholar_id,
+            title_raw,
+            year,
+            citation_count,
+            venue_text,
+            pub_url,
+            _is_read,
+            _first_seen_run_id,
+            _created_at,
+        ) = row
+        items.append(
+            UnreadPublicationItem(
+                publication_id=int(publication_id),
+                scholar_profile_id=int(scholar_profile_id),
+                scholar_label=(display_name or scholar_id),
+                title=title_raw,
+                year=year,
+                citation_count=int(citation_count or 0),
+                venue_text=venue_text,
+                pub_url=pub_url,
+            )
+        )
+    return items
+
+
+async def list_new_for_latest_run_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    limit: int = 100,
+) -> list[UnreadPublicationItem]:
+    rows = await list_for_user(
+        db_session,
+        user_id=user_id,
+        mode=MODE_NEW,
+        scholar_profile_id=None,
+        limit=limit,
+    )
+    return [
+        UnreadPublicationItem(
+            publication_id=row.publication_id,
+            scholar_profile_id=row.scholar_profile_id,
+            scholar_label=row.scholar_label,
+            title=row.title,
+            year=row.year,
+            citation_count=row.citation_count,
+            venue_text=row.venue_text,
+            pub_url=row.pub_url,
+        )
+        for row in rows
+    ]
+
+
+async def count_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    mode: str = MODE_ALL,
+    scholar_profile_id: int | None = None,
+) -> int:
+    resolved_mode = resolve_mode(mode)
+    latest_run_id = await get_latest_completed_run_id_for_user(
+        db_session,
+        user_id=user_id,
+    )
+    stmt = (
+        select(func.count())
+        .select_from(ScholarPublication)
+        .join(ScholarProfile, ScholarProfile.id == ScholarPublication.scholar_profile_id)
+        .where(ScholarProfile.user_id == user_id)
+    )
+    if scholar_profile_id is not None:
+        stmt = stmt.where(ScholarProfile.id == scholar_profile_id)
+    if resolved_mode == MODE_NEW:
+        if latest_run_id is None:
+            return 0
+        stmt = stmt.where(ScholarPublication.first_seen_run_id == latest_run_id)
+    result = await db_session.execute(stmt)
+    return int(result.scalar_one() or 0)
+
+
+async def mark_all_unread_as_read_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+) -> int:
+    scholar_ids = (
+        select(ScholarProfile.id)
+        .where(ScholarProfile.user_id == user_id)
+        .scalar_subquery()
+    )
+
+    stmt = (
+        update(ScholarPublication)
+        .where(
+            ScholarPublication.scholar_profile_id.in_(scholar_ids),
+            ScholarPublication.is_read.is_(False),
+        )
+        .values(is_read=True)
+    )
+    result = await db_session.execute(stmt)
+    await db_session.commit()
+
+    rowcount = result.rowcount
+    return int(rowcount or 0)

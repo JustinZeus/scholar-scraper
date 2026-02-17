@@ -1,0 +1,47 @@
+<section class="sandbox" data-test="dashboard-unread-publications">
+  <div class="section-heading">
+    <h2>New Since Last Run</h2>
+    <div class="inline-actions">
+      <a class="link-button" href="/publications?mode=all">View All</a>
+      <form method="post" action="{{ dashboard.run_controls.mark_all_read_action }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="return_to" value="/">
+        <button type="submit" data-loading-text="Marking...">Mark All Read</button>
+      </form>
+    </div>
+  </div>
+
+  {% if dashboard.unread_publications %}
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Scholar</th>
+        <th>Year</th>
+        <th>Citations</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in dashboard.unread_publications %}
+      <tr>
+        <td>
+          {% if item.pub_url %}
+          <a href="{{ item.pub_url }}" target="_blank" rel="noreferrer">{{ item.title }}</a>
+          {% else %}
+          {{ item.title }}
+          {% endif %}
+          {% if item.venue_text %}
+          <p class="helper-text">{{ item.venue_text }}</p>
+          {% endif %}
+        </td>
+        <td>{{ item.scholar_label }}</td>
+        <td>{{ item.year_display }}</td>
+        <td>{{ item.citation_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No new publications in the latest run.</p>
+  {% endif %}
+</section>

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: scholar
+          POSTGRES_USER: scholar
+          POSTGRES_PASSWORD: scholar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scholar -d scholar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://scholar:scholar@localhost:5432/scholar
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Migration smoke
+        run: uv run alembic upgrade head
+
+      - name: Unit tests
+        run: uv run pytest tests/unit
+
+      - name: Integration tests
+        run: uv run pytest -m integration
+

@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import random
+from dataclasses import dataclass
+from typing import Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+SCHOLAR_PROFILE_URL = "https://scholar.google.com/citations"
+DEFAULT_PAGE_SIZE = 100
+
+DEFAULT_USER_AGENTS = [
+    (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 "
+        "(KHTML, like Gecko) Version/18.1 Safari/605.1.15"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) "
+        "Gecko/20100101 Firefox/131.0"
+    ),
+]
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    requested_url: str
+    status_code: int | None
+    final_url: str | None
+    body: str
+    error: str | None
+
+
+class ScholarSource(Protocol):
+    async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+        ...
+
+    async def fetch_profile_page_html(
+        self,
+        scholar_id: str,
+        *,
+        cstart: int,
+        pagesize: int,
+    ) -> FetchResult:
+        ...
+
+
+class LiveScholarSource:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 25.0,
+        user_agents: list[str] | None = None,
+    ) -> None:
+        self._timeout_seconds = timeout_seconds
+        self._user_agents = user_agents or DEFAULT_USER_AGENTS
+
+    async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+        return await self.fetch_profile_page_html(
+            scholar_id,
+            cstart=0,
+            pagesize=DEFAULT_PAGE_SIZE,
+        )
+
+    async def fetch_profile_page_html(
+        self,
+        scholar_id: str,
+        *,
+        cstart: int,
+        pagesize: int = DEFAULT_PAGE_SIZE,
+    ) -> FetchResult:
+        requested_url = _build_profile_url(
+            scholar_id=scholar_id,
+            cstart=cstart,
+            pagesize=pagesize,
+        )
+        logger.debug(
+            "scholar_source.fetch_started",
+            extra={
+                "event": "scholar_source.fetch_started",
+                "scholar_id": scholar_id,
+                "requested_url": requested_url,
+                "cstart": cstart,
+                "pagesize": pagesize,
+            },
+        )
+        return await asyncio.to_thread(self._fetch_sync, requested_url)
+
+    def _fetch_sync(self, requested_url: str) -> FetchResult:
+        request = Request(
+            requested_url,
+            headers={
+                "User-Agent": random.choice(self._user_agents),
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Connection": "close",
+            },
+        )
+
+        try:
+            with urlopen(request, timeout=self._timeout_seconds) as response:
+                body = response.read().decode("utf-8", errors="replace")
+                status_code = getattr(response, "status", 200)
+                logger.debug(
+                    "scholar_source.fetch_succeeded",
+                    extra={
+                        "event": "scholar_source.fetch_succeeded",
+                        "requested_url": requested_url,
+                        "status_code": status_code,
+                    },
+                )
+                return FetchResult(
+                    requested_url=requested_url,
+                    status_code=status_code,
+                    final_url=response.geturl(),
+                    body=body,
+                    error=None,
+                )
+        except HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            logger.warning(
+                "scholar_source.fetch_http_error",
+                extra={
+                    "event": "scholar_source.fetch_http_error",
+                    "requested_url": requested_url,
+                    "status_code": exc.code,
+                },
+            )
+            return FetchResult(
+                requested_url=requested_url,
+                status_code=exc.code,
+                final_url=exc.geturl(),
+                body=body,
+                error=str(exc),
+            )
+        except URLError as exc:
+            logger.warning(
+                "scholar_source.fetch_network_error",
+                extra={
+                    "event": "scholar_source.fetch_network_error",
+                    "requested_url": requested_url,
+                },
+            )
+            return FetchResult(
+                requested_url=requested_url,
+                status_code=None,
+                final_url=None,
+                body="",
+                error=str(exc),
+            )
+
+
+def _build_profile_url(*, scholar_id: str, cstart: int, pagesize: int) -> str:
+    query: dict[str, int | str] = {"hl": "en", "user": scholar_id}
+    if cstart > 0:
+        query["cstart"] = int(cstart)
+    if pagesize > 0 and cstart > 0:
+        query["pagesize"] = int(pagesize)
+    return f"{SCHOLAR_PROFILE_URL}?{urlencode(query)}"

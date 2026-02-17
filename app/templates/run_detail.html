@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero" data-test="run-detail-page">
+  <p class="eyebrow">Diagnostics</p>
+  <h1>Run #{{ run.id }}</h1>
+  <p class="lede">Detailed state and failure context for this execution.</p>
+</section>
+
+<section class="sandbox" data-test="run-detail-summary">
+  <h2>Summary</h2>
+  <table>
+    <tbody>
+      <tr><th>Started</th><td>{{ run.started_at }}</td></tr>
+      <tr><th>Finished</th><td>{{ run.finished_at }}</td></tr>
+      <tr><th>Status</th><td><span class="badge {{ run.status_badge }}">{{ run.status }}</span></td></tr>
+      <tr><th>Trigger</th><td>{{ run.trigger_type }}</td></tr>
+      <tr><th>Scholars</th><td>{{ run.scholar_count }}</td></tr>
+      <tr><th>New Publications</th><td>{{ run.new_publication_count }}</td></tr>
+      <tr><th>Succeeded</th><td>{{ run_summary.succeeded_count or 0 }}</td></tr>
+      <tr><th>Failed</th><td>{{ run_summary.failed_count or 0 }}</td></tr>
+      <tr><th>Partial</th><td>{{ run_summary.partial_count or 0 }}</td></tr>
+    </tbody>
+  </table>
+  {% if run_summary.failed_state_counts or run_summary.failed_reason_counts %}
+  <details>
+    <summary>Failure Breakdown</summary>
+    <pre>{{ {"failed_state_counts": run_summary.failed_state_counts, "failed_reason_counts": run_summary.failed_reason_counts} | tojson(indent=2) }}</pre>
+  </details>
+  {% endif %}
+</section>
+
+<section class="sandbox" data-test="run-detail-results">
+  <h2>Scholar Results</h2>
+  {% if scholar_results %}
+  <table>
+    <thead>
+      <tr>
+        <th>Scholar</th>
+        <th>Outcome</th>
+        <th>State</th>
+        <th>Reason</th>
+        <th>Publications</th>
+        <th>Pages</th>
+        <th>Attempts</th>
+        <th>Continuation</th>
+        <th>Warnings</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in scholar_results %}
+      <tr>
+        <td><code>{{ item.scholar_id }}</code></td>
+        <td>{{ item.outcome or "-" }}</td>
+        <td>{{ item.state }}</td>
+        <td>{{ item.state_reason or "-" }}</td>
+        <td>{{ item.publication_count }}</td>
+        <td>{{ item.pages_fetched or 0 }} / {{ item.pages_attempted or 0 }}</td>
+        <td>{{ item.attempt_count or 1 }}</td>
+        <td>
+          {% if item.continuation_enqueued %}
+          <span class="badge warn">queued</span>
+          <p class="helper-text">
+            reason: {{ item.continuation_reason or "-" }},
+            cstart: {{ item.continuation_cstart or "-" }}
+          </p>
+          {% elif item.continuation_cleared %}
+          <span class="badge ok">cleared</span>
+          {% else %}
+          -
+          {% endif %}
+        </td>
+        <td>
+          {% if item.warnings %}
+          {{ item.warnings | join(", ") }}
+          {% else %}
+          -
+          {% endif %}
+        </td>
+      </tr>
+      {% if item.debug %}
+      <tr>
+        <td colspan="9">
+          <details>
+            <summary>Debug Context</summary>
+            <pre>{{ item.debug | tojson(indent=2) }}</pre>
+          </details>
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No scholar result details were captured.</p>
+  {% endif %}
+</section>
+{% endblock %}

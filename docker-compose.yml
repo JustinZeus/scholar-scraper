@@ -1,0 +1,68 @@
+name: scholarr
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scholar}
+      POSTGRES_USER: ${POSTGRES_USER:-scholar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scholar}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scholar} -d ${POSTGRES_DB:-scholar}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      target: dev
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://scholar:scholar@db:5432/scholar}
+      TEST_DATABASE_URL: ${TEST_DATABASE_URL:-}
+      MIGRATE_ON_START: ${MIGRATE_ON_START:-1}
+      APP_NAME: ${APP_NAME:-scholarr}
+      APP_HOST: ${APP_HOST:-0.0.0.0}
+      APP_PORT: ${APP_PORT:-8000}
+      APP_RELOAD: ${APP_RELOAD:-1}
+      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-dev-insecure-session-key}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-0}
+      LOGIN_RATE_LIMIT_ATTEMPTS: ${LOGIN_RATE_LIMIT_ATTEMPTS:-5}
+      LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${LOGIN_RATE_LIMIT_WINDOW_SECONDS:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-console}
+      LOG_REQUESTS: ${LOG_REQUESTS:-1}
+      LOG_UVICORN_ACCESS: ${LOG_UVICORN_ACCESS:-0}
+      LOG_REQUEST_SKIP_PATHS: ${LOG_REQUEST_SKIP_PATHS:-/healthz,/static/}
+      LOG_REDACT_FIELDS: ${LOG_REDACT_FIELDS:-}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-1}
+      SCHEDULER_TICK_SECONDS: ${SCHEDULER_TICK_SECONDS:-60}
+      INGESTION_NETWORK_ERROR_RETRIES: ${INGESTION_NETWORK_ERROR_RETRIES:-1}
+      INGESTION_RETRY_BACKOFF_SECONDS: ${INGESTION_RETRY_BACKOFF_SECONDS:-1.0}
+      INGESTION_MAX_PAGES_PER_SCHOLAR: ${INGESTION_MAX_PAGES_PER_SCHOLAR:-30}
+      INGESTION_PAGE_SIZE: ${INGESTION_PAGE_SIZE:-100}
+      BOOTSTRAP_ADMIN_ON_START: ${BOOTSTRAP_ADMIN_ON_START:-0}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_FORCE_PASSWORD: ${BOOTSTRAP_ADMIN_FORCE_PASSWORD:-0}
+      DB_WAIT_TIMEOUT_SECONDS: ${DB_WAIT_TIMEOUT_SECONDS:-60}
+      DB_WAIT_INTERVAL_SECONDS: ${DB_WAIT_INTERVAL_SECONDS:-2}
+    ports:
+      - "${APP_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_data:

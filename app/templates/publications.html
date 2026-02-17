@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero" data-test="publications-page">
+  <p class="eyebrow">Publications</p>
+  <h1>Publications</h1>
+  <p class="lede">
+    Browse publications discovered in the latest run or your complete tracked library.
+    {% if selected_scholar %}
+    Current scholar filter: <strong>{{ selected_scholar.display_name or selected_scholar.scholar_id }}</strong>.
+    {% endif %}
+  </p>
+  <div class="inline-actions">
+    <a class="link-button {% if mode == 'new' %}is-active{% endif %}" href="{{ mode_new_url }}">New Since Last Run ({{ new_count }})</a>
+    <a class="link-button {% if mode == 'all' %}is-active{% endif %}" href="{{ mode_all_url }}">All ({{ total_count }})</a>
+    <a class="link-button" href="/scholars">Manage Scholars</a>
+    <a class="link-button" href="/runs?failed_only=1">Run Diagnostics</a>
+    {% if mode == 'new' and new_count > 0 %}
+    <form method="post" action="/publications/mark-all-read">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="return_to" value="{{ current_publications_url }}">
+      <button type="submit" data-loading-text="Marking...">Mark All Read</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<section class="sandbox" data-test="publications-table">
+  <div class="section-heading">
+    <h2>Filter</h2>
+  </div>
+  <form method="get" action="/publications" class="inline-actions">
+    <label for="mode">Mode</label>
+    <select id="mode" name="mode">
+      <option value="new" {% if mode == 'new' %}selected{% endif %}>New Since Last Run</option>
+      <option value="all" {% if mode == 'all' %}selected{% endif %}>All Publications</option>
+    </select>
+
+    <label for="scholar_profile_id">Scholar</label>
+    <select id="scholar_profile_id" name="scholar_profile_id">
+      <option value="">All Scholars</option>
+      {% for scholar in scholars %}
+      <option value="{{ scholar.id }}" {% if selected_scholar_id == scholar.id %}selected{% endif %}>
+        {{ scholar.display_name or scholar.scholar_id }}
+      </option>
+      {% endfor %}
+    </select>
+    <button type="submit" data-loading-text="Filtering...">Apply</button>
+  </form>
+
+  <div class="section-heading">
+    <h2>Results</h2>
+  </div>
+  {% if publications %}
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Scholar</th>
+        <th>Year</th>
+        <th>Citations</th>
+        <th>New This Run</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in publications %}
+      <tr>
+        <td>
+          {% if item.pub_url %}
+          <a href="{{ item.pub_url }}" target="_blank" rel="noreferrer">{{ item.title }}</a>
+          {% else %}
+          {{ item.title }}
+          {% endif %}
+          {% if item.venue_text %}
+          <p class="helper-text">{{ item.venue_text }}</p>
+          {% endif %}
+        </td>
+        <td>{{ item.scholar_label }}</td>
+        <td>{{ item.year if item.year is not none else "-" }}</td>
+        <td>{{ item.citation_count }}</td>
+        <td>
+          {% if item.is_new_in_latest_run %}
+          <span class="badge warn">new</span>
+          {% else %}
+          <span class="badge">older</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if item.is_read %}
+          <span class="badge ok">read</span>
+          {% else %}
+          <span class="badge warn">new</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No publications match this mode yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
