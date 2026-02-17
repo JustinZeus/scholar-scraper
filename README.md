@@ -2,7 +2,7 @@
 
 <div align="center">
 
-API-first, self-hosted scholar tracking in the spirit of the `*arr` ecosystem.
+Self-hosted scholar tracking with a single app image (API + frontend).
 
 [![CI](https://img.shields.io/github/actions/workflow/status/justinzeus/scholarr/ci.yml?style=for-the-badge)](https://github.com/justinzeus/scholarr/actions/workflows/ci.yml)
 [![Docker Pulls](https://img.shields.io/docker/pulls/justinzeus/scholarr?style=for-the-badge&logo=docker)](https://hub.docker.com/r/justinzeus/scholarr)
@@ -10,99 +10,169 @@ API-first, self-hosted scholar tracking in the spirit of the `*arr` ecosystem.
 
 </div>
 
-## What This Includes
+## Quick Start
 
-- Multi-user accounts with admin-managed lifecycle
-- Cookie session auth with CSRF enforcement
-- Scholar CRUD + name-search discovery + profile image management
-- Per-user ingestion settings and scheduler
-- Manual runs with idempotency behavior
-- Run history and continuation queue diagnostics/actions
-- Publications workflow (`new` / `all`, mark-selected-read, mark-all-read)
-- Vue 3 + Vite frontend served from the same container image as the API
+1. Copy env template:
 
-## Docker Image
+```bash
+cp .env.example .env
+```
 
-- Image: `justinzeus/scholarr`
-- Published by GitHub Actions on every push to `main`
-- Architectures: `linux/amd64`, `linux/arm64`
-- Tags:
-  - `latest`
-  - `sha-<short_commit>`
+2. Set required values in `.env`:
+- `POSTGRES_PASSWORD`
+- `SESSION_SECRET_KEY`
 
-## Quick Deploy (Copy Compose + Fill Env)
+3. Choose a deploy method below.
 
-1. Copy `docker-compose.yml` and `.env.example` into your deployment directory.
-2. Create `.env` from `.env.example`.
-3. Set at minimum:
-   - `SESSION_SECRET_KEY`
-   - `POSTGRES_PASSWORD`
-4. Pull and start:
+## Deploy Method A: Prebuilt Image (Recommended)
+
+Use this for normal self-hosted deployment.
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-5. Open:
+Open:
+- App/API: `http://localhost:8000`
+- Health: `http://localhost:8000/healthz`
 
-- App + API: `http://localhost:8000`
-- Health check: `http://localhost:8000/healthz`
-
-The SPA and API are same-origin by default in this deployment model.
-
-## Required Environment Variables
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `SESSION_SECRET_KEY` | Yes | Session signing key. Use a long random value. |
-| `POSTGRES_PASSWORD` | Yes | Database password for the bundled Postgres service. |
-
-Optional startup bootstrap:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `BOOTSTRAP_ADMIN_ON_START` | `0` | Auto-create admin on app start. |
-| `BOOTSTRAP_ADMIN_EMAIL` | empty | Admin email for bootstrap. |
-| `BOOTSTRAP_ADMIN_PASSWORD` | empty | Admin password for bootstrap. |
-| `BOOTSTRAP_ADMIN_FORCE_PASSWORD` | `0` | Force-reset bootstrap admin password if exists. |
-
-## Ports
-
-| Port | Service | Description |
-| --- | --- | --- |
-| `8000` | `app` | scholarr API + frontend |
-
-## Volumes
-
-| Volume | Container Path | Purpose |
-| --- | --- | --- |
-| `postgres_data` | `/var/lib/postgresql/data` | Postgres persistence |
-| `scholar_uploads` | `/var/lib/scholarr/uploads` | Scholar image upload persistence |
-
-## Upgrade
+Upgrade:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-## Development Workflow
+## Deploy Method B: Local Source Build + Dev Frontend
 
-Default `docker-compose.yml` is deployment-oriented (prebuilt image).
-
-For local development with source mounts + Vite dev server:
+Use this for development on this repository.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
-Then open:
+Open:
+- API (FastAPI): `http://localhost:8000`
+- Frontend dev server (Vite): `http://localhost:5173`
 
-- API: `http://localhost:8000`
-- Frontend dev server: `http://localhost:5173`
+Stop:
 
-## Test and Quality Commands
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+```
+
+## Essential Files
+
+- `docker-compose.yml`: deployment compose (prebuilt image).
+- `docker-compose.dev.yml`: dev override (source mounts + Vite dev server).
+- `.env.example`: full env variable template.
+- `Dockerfile`: multi-stage build (frontend + backend runtime).
+- `README.md`: deployment and operations reference.
+
+## Environment Variables (Complete Reference)
+
+Notes:
+- Boolean envs accept: `1/0`, `true/false`, `yes/no`, `on/off`.
+- Values shown are defaults from `.env.example`.
+- `deploy` means used in regular deployment.
+- `dev` means used in local dev workflow.
+
+### Core Compose and Database
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `POSTGRES_DB` | `scholar` | any valid DB name | deploy, dev | PostgreSQL database name. |
+| `POSTGRES_USER` | `scholar` | any valid DB user | deploy, dev | PostgreSQL user. |
+| `POSTGRES_PASSWORD` | `change-me` | strong password | deploy, dev | PostgreSQL password. Required. |
+| `DATABASE_URL` | `postgresql+asyncpg://scholar:scholar@db:5432/scholar` | valid SQLAlchemy asyncpg URL | deploy, dev, test | App database connection URL. |
+| `TEST_DATABASE_URL` | empty | valid SQLAlchemy asyncpg URL | test | Optional explicit integration test DB URL. |
+| `SCHOLARR_IMAGE` | `justinzeus/scholarr:latest` | any image ref | deploy | App image tag used by deployment compose. |
+
+### App Runtime and Networking
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `APP_NAME` | `scholarr` | any string | deploy, dev | FastAPI app name/title. |
+| `APP_HOST` | `0.0.0.0` | bind host | deploy, dev | Uvicorn bind host inside container. |
+| `APP_PORT` | `8000` | integer | deploy, dev | Uvicorn bind port inside container. |
+| `APP_HOST_PORT` | `8000` | integer | deploy, dev | Host port mapped to app container port 8000. |
+| `APP_RELOAD` | `0` | boolean | deploy, dev | Enable uvicorn reload mode. Recommended `0` in deploy, `1` in dev. |
+| `MIGRATE_ON_START` | `1` | boolean | deploy, dev | Run Alembic migrations during app startup. |
+| `FRONTEND_ENABLED` | `1` | boolean | deploy, dev | Serve bundled frontend assets from FastAPI. |
+| `FRONTEND_DIST_DIR` | `/app/frontend/dist` | absolute path | deploy, dev | Path to built frontend assets inside app container. |
+
+### Dev Frontend Overrides
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `FRONTEND_HOST_PORT` | `5173` | integer | dev | Host port mapped to Vite dev server. |
+| `CHOKIDAR_USEPOLLING` | `1` | boolean | dev | File watching mode for containerized Vite. |
+| `VITE_DEV_API_PROXY_TARGET` | `http://app:8000` | URL | dev | Vite proxy target for `/api` and `/healthz`. |
+
+### Auth and Session Security
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `SESSION_SECRET_KEY` | `replace-with-a-long-random-secret-at-least-32-characters` | long random string | deploy, dev | Session signing secret. Required in deploy. |
+| `SESSION_COOKIE_SECURE` | `1` | boolean | deploy, dev | Mark session cookie as HTTPS-only. Set `1` behind HTTPS. |
+| `LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | integer >= 1 | deploy, dev | Login attempts allowed per window. |
+| `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `60` | integer >= 1 | deploy, dev | Login rate limit window in seconds. |
+
+### Logging
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | deploy, dev | Application log level. |
+| `LOG_FORMAT` | `console` | `console`, `json` | deploy, dev | Log output format. |
+| `LOG_REQUESTS` | `1` | boolean | deploy, dev | Enable request start/completion logs. |
+| `LOG_UVICORN_ACCESS` | `0` | boolean | deploy, dev | Enable uvicorn access logs. |
+| `LOG_REQUEST_SKIP_PATHS` | `/healthz` | comma-separated path prefixes | deploy, dev | Request log skip list. |
+| `LOG_REDACT_FIELDS` | empty | comma-separated keys | deploy, dev | Extra fields to redact in structured logs. |
+
+### Scheduler and Ingestion
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `SCHEDULER_ENABLED` | `1` | boolean | deploy, dev | Enable background scheduler loop. |
+| `SCHEDULER_TICK_SECONDS` | `60` | integer >= 1 | deploy, dev | Scheduler interval in seconds. |
+| `SCHEDULER_QUEUE_BATCH_SIZE` | `10` | integer >= 1 | deploy, dev | Queue items processed per scheduler tick. |
+| `INGESTION_NETWORK_ERROR_RETRIES` | `1` | integer >= 0 | deploy, dev | Retries for transient ingestion network errors. |
+| `INGESTION_RETRY_BACKOFF_SECONDS` | `1.0` | float >= 0 | deploy, dev | Backoff delay for retry attempts. |
+| `INGESTION_MAX_PAGES_PER_SCHOLAR` | `30` | integer >= 1 | deploy, dev | Upper bound of pages fetched per scholar run. |
+| `INGESTION_PAGE_SIZE` | `100` | integer >= 1 | deploy, dev | Requested Scholar page size. |
+| `INGESTION_CONTINUATION_QUEUE_ENABLED` | `1` | boolean | deploy, dev | Enable continuation queue for long runs. |
+| `INGESTION_CONTINUATION_BASE_DELAY_SECONDS` | `120` | integer >= 0 | deploy, dev | Initial delay before retrying continuation queue items. |
+| `INGESTION_CONTINUATION_MAX_DELAY_SECONDS` | `3600` | integer >= 0 | deploy, dev | Maximum continuation retry delay. |
+| `INGESTION_CONTINUATION_MAX_ATTEMPTS` | `6` | integer >= 1 | deploy, dev | Max failed continuation attempts before dropping item. |
+
+### Scholar Images and Name Search Safety
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `SCHOLAR_IMAGE_UPLOAD_DIR` | `/var/lib/scholarr/uploads` | writable absolute path | deploy, dev | Storage path for uploaded scholar images. |
+| `SCHOLAR_IMAGE_UPLOAD_MAX_BYTES` | `2000000` | integer >= 1 | deploy, dev | Max uploaded image size in bytes. |
+| `SCHOLAR_NAME_SEARCH_ENABLED` | `1` | boolean | deploy, dev | Enable name-search helper endpoint. |
+| `SCHOLAR_NAME_SEARCH_CACHE_TTL_SECONDS` | `21600` | integer >= 1 | deploy, dev | Cache TTL for successful name-search responses. |
+| `SCHOLAR_NAME_SEARCH_BLOCKED_CACHE_TTL_SECONDS` | `300` | integer >= 1 | deploy, dev | Cache TTL for blocked/captcha responses. |
+| `SCHOLAR_NAME_SEARCH_CACHE_MAX_ENTRIES` | `512` | integer >= 1 | deploy, dev | Max cached search entries. |
+| `SCHOLAR_NAME_SEARCH_MIN_INTERVAL_SECONDS` | `8.0` | float >= 0 | deploy, dev | Minimum interval between live name-search requests. |
+| `SCHOLAR_NAME_SEARCH_INTERVAL_JITTER_SECONDS` | `2.0` | float >= 0 | deploy, dev | Added jitter to reduce request burst patterns. |
+| `SCHOLAR_NAME_SEARCH_COOLDOWN_BLOCK_THRESHOLD` | `1` | integer >= 1 | deploy, dev | Consecutive blocked responses before cooldown starts. |
+| `SCHOLAR_NAME_SEARCH_COOLDOWN_SECONDS` | `1800` | integer >= 1 | deploy, dev | Cooldown duration after repeated blocked responses. |
+
+### Startup Bootstrap and DB Wait
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `BOOTSTRAP_ADMIN_ON_START` | `0` | boolean | deploy, dev | Auto-create admin at startup. |
+| `BOOTSTRAP_ADMIN_EMAIL` | empty | valid email | deploy, dev | Bootstrap admin email. |
+| `BOOTSTRAP_ADMIN_PASSWORD` | empty | strong password | deploy, dev | Bootstrap admin password. |
+| `BOOTSTRAP_ADMIN_FORCE_PASSWORD` | `0` | boolean | deploy, dev | Force-reset bootstrap admin password if user already exists. |
+| `DB_WAIT_TIMEOUT_SECONDS` | `60` | integer >= 1 | deploy, dev | Max seconds to wait for DB readiness at startup. |
+| `DB_WAIT_INTERVAL_SECONDS` | `2` | integer >= 1 | deploy, dev | Interval between DB readiness checks. |
+
+## Quality and Test Commands
 
 Backend:
 
@@ -121,27 +191,14 @@ npm run test:run
 npm run build
 ```
 
-Contract drift check:
+Contract drift:
 
 ```bash
 python3 scripts/check_frontend_api_contract.py
 ```
 
-## API Base
+## API Contract
 
 - Base path: `/api/v1`
-- Success envelope:
-  - `{"data": ..., "meta": {"request_id": "..."}}`
-- Error envelope:
-  - `{"error": {"code": "...", "message": "...", "details": ...}, "meta": {"request_id": "..."}}`
-
-## Logging
-
-Important envs:
-
-- `LOG_LEVEL`
-- `LOG_FORMAT` (`console` or `json`)
-- `LOG_REQUESTS`
-- `LOG_UVICORN_ACCESS`
-- `LOG_REQUEST_SKIP_PATHS`
-- `LOG_REDACT_FIELDS`
+- Success envelope: `{"data": ..., "meta": {"request_id": "..."}}`
+- Error envelope: `{"error": {"code": "...", "message": "...", "details": ...}, "meta": {"request_id": "..."}}`
