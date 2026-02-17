@@ -1,36 +1,29 @@
 from __future__ import annotations
 
-import re
-
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import PasswordService
 
-CSRF_TOKEN_PATTERN = re.compile(r'name="csrf_token" value="([^"]+)"')
-
-
-def extract_csrf_token(html: str) -> str:
-    match = CSRF_TOKEN_PATTERN.search(html)
-    assert match is not None
-    return match.group(1)
-
-
 def login_user(client: TestClient, *, email: str, password: str) -> None:
-    login_page = client.get("/login")
-    csrf_token = extract_csrf_token(login_page.text)
+    bootstrap_response = client.get("/api/v1/auth/csrf")
+    assert bootstrap_response.status_code == 200
+    csrf_token = bootstrap_response.json()["data"]["csrf_token"]
+    assert isinstance(csrf_token, str) and csrf_token
+
     response = client.post(
-        "/login",
-        data={
+        "/api/v1/auth/login",
+        json={
             "email": email,
             "password": password,
-            "csrf_token": csrf_token,
         },
+        headers={"X-CSRF-Token": csrf_token},
         follow_redirects=False,
     )
-    assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["authenticated"] is True
 
 
 async def insert_user(
@@ -60,4 +53,3 @@ async def insert_user(
     user_id = int(result.scalar_one())
     await db_session.commit()
     return user_id
-

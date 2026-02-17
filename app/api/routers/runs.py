@@ -24,7 +24,7 @@ from app.services import ingestion as ingestion_service
 from app.services import runs as run_service
 from app.services import user_settings as user_settings_service
 from app.settings import settings
-from app.web.deps import get_ingestion_service
+from app.api.runtime_deps import get_ingestion_service
 
 logger = logging.getLogger(__name__)
 

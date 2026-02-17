@@ -48,7 +48,7 @@ class Settings:
     log_format: str = _env_str("LOG_FORMAT", "console")
     log_requests: bool = _env_bool("LOG_REQUESTS", True)
     log_uvicorn_access: bool = _env_bool("LOG_UVICORN_ACCESS", False)
-    log_request_skip_paths: str = _env_str("LOG_REQUEST_SKIP_PATHS", "/healthz,/static/")
+    log_request_skip_paths: str = _env_str("LOG_REQUEST_SKIP_PATHS", "/healthz")
     log_redact_fields: str = os.getenv("LOG_REDACT_FIELDS", "")
     scheduler_enabled: bool = _env_bool("SCHEDULER_ENABLED", True)
     scheduler_tick_seconds: int = _env_int("SCHEDULER_TICK_SECONDS", 60)

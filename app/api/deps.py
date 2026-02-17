@@ -4,16 +4,16 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import ApiException
+from app.auth import runtime as auth_runtime
 from app.db.models import User
 from app.db.session import get_db_session
-from app.web import common as web_common
 
 
 async def get_api_current_user(
     request: Request,
     db_session: AsyncSession = Depends(get_db_session),
 ) -> User:
-    current_user = await web_common.get_authenticated_user(request, db_session)
+    current_user = await auth_runtime.get_authenticated_user(request, db_session)
     if current_user is None:
         raise ApiException(
             status_code=401,
@@ -33,4 +33,3 @@ async def get_api_admin_user(
             message="Admin access required.",
         )
     return current_user
-

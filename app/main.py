@@ -2,30 +2,19 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.errors import register_api_exception_handlers
 from app.api.router import router as api_router
+from app.api.runtime_deps import get_ingestion_service, get_scholar_source
+from app.db.session import check_database
 from app.db.session import close_engine
+from app.http.middleware import RequestLoggingMiddleware, parse_skip_paths
 from app.logging_config import configure_logging, parse_redact_fields
 from app.security.csrf import CSRFMiddleware
 from app.services.scheduler import SchedulerService
 from app.settings import settings
-from app.web import common as web_common
-from app.web.deps import get_ingestion_service, get_scholar_source
-from app.web.middleware import RequestLoggingMiddleware, parse_skip_paths
-from app.web.routers import (
-    admin,
-    auth,
-    dashboard,
-    health,
-    publications,
-    runs,
-    scholars,
-    settings as settings_router,
-)
 
 configure_logging(
     level=settings.log_level,
@@ -71,17 +60,11 @@ app.add_middleware(
     log_requests=settings.log_requests,
     skip_paths=parse_skip_paths(settings.log_request_skip_paths),
 )
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
 app.include_router(api_router)
-app.include_router(auth.router)
-app.include_router(admin.router)
-app.include_router(scholars.router)
-app.include_router(settings_router.router)
-app.include_router(runs.router)
-app.include_router(publications.router)
-app.include_router(dashboard.router)
-app.include_router(health.router)
 
-# Backward-compatible export kept for tests and any existing local scripts.
-_get_authenticated_user = web_common.get_authenticated_user
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    if await check_database():
+        return {"status": "ok"}
+    raise HTTPException(status_code=500, detail="database unavailable")

@@ -14,4 +14,3 @@ def get_ingestion_service(
     source: scholar_source_service.ScholarSource = Depends(get_scholar_source),
 ) -> ingestion_service.ScholarIngestionService:
     return ingestion_service.ScholarIngestionService(source=source)
-

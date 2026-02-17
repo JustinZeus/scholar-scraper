@@ -77,8 +77,6 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method in SAFE_METHODS:
             return True
         path = request.url.path
-        if path.startswith("/static/"):
-            return True
         return path in self._exempt_paths
 
     def _is_form_payload(self, request: Request) -> bool:
