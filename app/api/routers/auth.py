@@ -18,13 +18,13 @@ from app.api.schemas import (
 )
 from app.auth.deps import get_auth_service, get_login_rate_limiter
 from app.auth.rate_limit import SlidingWindowRateLimiter
+from app.auth import runtime as auth_runtime
 from app.auth.service import AuthService
 from app.auth.session import set_session_user
 from app.db.models import User
 from app.db.session import get_db_session
 from app.security.csrf import ensure_csrf_token
 from app.services import users as user_service
-from app.web import common as web_common
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ async def login(
     auth_service: AuthService = Depends(get_auth_service),
     rate_limiter: SlidingWindowRateLimiter = Depends(get_login_rate_limiter),
 ):
-    limiter_key = web_common.login_rate_limit_key(request, payload.email)
+    limiter_key = auth_runtime.login_rate_limit_key(request, payload.email)
     decision = rate_limiter.check(limiter_key)
     normalized_email = payload.email.strip().lower()
     if not decision.allowed:
@@ -142,7 +142,7 @@ async def get_csrf_bootstrap(
     request: Request,
     db_session: AsyncSession = Depends(get_db_session),
 ):
-    current_user = await web_common.get_authenticated_user(request, db_session)
+    current_user = await auth_runtime.get_authenticated_user(request, db_session)
     return success_payload(
         request,
         data={
@@ -213,8 +213,8 @@ async def logout(
     request: Request,
     db_session: AsyncSession = Depends(get_db_session),
 ):
-    current_user = await web_common.get_authenticated_user(request, db_session)
-    web_common.invalidate_session(request)
+    current_user = await auth_runtime.get_authenticated_user(request, db_session)
+    auth_runtime.invalidate_session(request)
     logger.info(
         "api.auth.logout",
         extra={

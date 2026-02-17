@@ -1,31 +1,23 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.errors import register_api_exception_handlers
 from app.api.router import router as api_router
+from app.api.runtime_deps import get_ingestion_service, get_scholar_source
+from app.db.session import check_database
 from app.db.session import close_engine
+from app.http.middleware import RequestLoggingMiddleware, parse_skip_paths
 from app.logging_config import configure_logging, parse_redact_fields
 from app.security.csrf import CSRFMiddleware
 from app.services.scheduler import SchedulerService
 from app.settings import settings
-from app.web import common as web_common
-from app.web.deps import get_ingestion_service, get_scholar_source
-from app.web.middleware import RequestLoggingMiddleware, parse_skip_paths
-from app.web.routers import (
-    admin,
-    auth,
-    dashboard,
-    health,
-    publications,
-    runs,
-    scholars,
-    settings as settings_router,
-)
 
 configure_logging(
     level=settings.log_level,
@@ -71,17 +63,50 @@ app.add_middleware(
     log_requests=settings.log_requests,
     skip_paths=parse_skip_paths(settings.log_request_skip_paths),
 )
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
 app.include_router(api_router)
-app.include_router(auth.router)
-app.include_router(admin.router)
-app.include_router(scholars.router)
-app.include_router(settings_router.router)
-app.include_router(runs.router)
-app.include_router(publications.router)
-app.include_router(dashboard.router)
-app.include_router(health.router)
 
-# Backward-compatible export kept for tests and any existing local scripts.
-_get_authenticated_user = web_common.get_authenticated_user
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    if await check_database():
+        return {"status": "ok"}
+    raise HTTPException(status_code=500, detail="database unavailable")
+
+
+def _configure_frontend_routes(application: FastAPI) -> None:
+    if not settings.frontend_enabled:
+        return
+
+    dist_dir = Path(settings.frontend_dist_dir)
+    index_file = dist_dir / "index.html"
+
+    if not index_file.is_file():
+        return
+
+    assets_dir = dist_dir / "assets"
+    if assets_dir.is_dir():
+        application.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+    @application.get("/", include_in_schema=False)
+    async def frontend_index() -> FileResponse:
+        return FileResponse(index_file)
+
+    @application.get("/{full_path:path}", include_in_schema=False)
+    async def frontend_entry(full_path: str) -> FileResponse:
+        normalized = full_path.lstrip("/")
+        if normalized in {"healthz", "api"} or normalized.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        candidate = (dist_dir / normalized).resolve()
+        try:
+            candidate.relative_to(dist_dir.resolve())
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="Not Found") from error
+
+        if candidate.is_file():
+            return FileResponse(candidate)
+
+        return FileResponse(index_file)
+
+
+_configure_frontend_routes(app)

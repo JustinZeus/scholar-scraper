@@ -399,6 +399,39 @@ class SchedulerService:
                 return
 
         async with session_factory() as session:
+            # Failed-attempt budget should advance only when continuation execution fails.
+            if int(run_summary.failed_count) <= 0:
+                queue_item = await queue_service.reset_attempt_count(
+                    session,
+                    job_id=job.id,
+                )
+                if queue_item is None:
+                    await session.commit()
+                    logger.info(
+                        "scheduler.queue_item_resolved",
+                        extra={
+                            "event": "scheduler.queue_item_resolved",
+                            "queue_item_id": job.id,
+                            "user_id": job.user_id,
+                            "run_id": run_summary.crawl_run_id,
+                            "status": run_summary.status.value,
+                        },
+                    )
+                    return
+                await session.commit()
+                logger.info(
+                    "scheduler.queue_item_progressed",
+                    extra={
+                        "event": "scheduler.queue_item_progressed",
+                        "queue_item_id": job.id,
+                        "user_id": job.user_id,
+                        "attempt_count": int(queue_item.attempt_count),
+                        "run_id": run_summary.crawl_run_id,
+                        "status": run_summary.status.value,
+                    },
+                )
+                return
+
             queue_item = await queue_service.increment_attempt_count(
                 session,
                 job_id=job.id,
@@ -451,9 +484,9 @@ class SchedulerService:
             )
             await session.commit()
             logger.info(
-                "scheduler.queue_item_rescheduled",
+                "scheduler.queue_item_rescheduled_failed",
                 extra={
-                    "event": "scheduler.queue_item_rescheduled",
+                    "event": "scheduler.queue_item_rescheduled_failed",
                     "queue_item_id": job.id,
                     "user_id": job.user_id,
                     "attempt_count": queue_item.attempt_count,

@@ -1,0 +1,31 @@
+services:
+  app:
+    image: scholarr-dev:local
+    build:
+      context: .
+      target: dev
+    environment:
+      APP_RELOAD: ${APP_RELOAD:-1}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-0}
+      FRONTEND_ENABLED: ${FRONTEND_ENABLED:-0}
+    volumes:
+      - ./:/app
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /frontend
+    command: ["sh", "-lc", "npm install && npm run dev"]
+    environment:
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-1}
+      VITE_DEV_API_PROXY_TARGET: ${VITE_DEV_API_PROXY_TARGET:-http://app:8000}
+    ports:
+      - "${FRONTEND_HOST_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/frontend
+      - frontend_node_modules:/frontend/node_modules
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  frontend_node_modules:

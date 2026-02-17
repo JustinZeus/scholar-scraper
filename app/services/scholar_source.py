@@ -52,6 +52,14 @@ class ScholarSource(Protocol):
     ) -> FetchResult:
         ...
 
+    async def fetch_author_search_html(
+        self,
+        query: str,
+        *,
+        start: int,
+    ) -> FetchResult:
+        ...
+
 
 class LiveScholarSource:
     def __init__(
@@ -90,6 +98,27 @@ class LiveScholarSource:
                 "requested_url": requested_url,
                 "cstart": cstart,
                 "pagesize": pagesize,
+            },
+        )
+        return await asyncio.to_thread(self._fetch_sync, requested_url)
+
+    async def fetch_author_search_html(
+        self,
+        query: str,
+        *,
+        start: int = 0,
+    ) -> FetchResult:
+        requested_url = _build_author_search_url(
+            query=query,
+            start=start,
+        )
+        logger.debug(
+            "scholar_source.search_fetch_started",
+            extra={
+                "event": "scholar_source.search_fetch_started",
+                "query": query,
+                "requested_url": requested_url,
+                "start": start,
             },
         )
         return await asyncio.to_thread(self._fetch_sync, requested_url)
@@ -169,3 +198,14 @@ def _build_profile_url(*, scholar_id: str, cstart: int, pagesize: int) -> str:
     if pagesize > 0 and cstart > 0:
         query["pagesize"] = int(pagesize)
     return f"{SCHOLAR_PROFILE_URL}?{urlencode(query)}"
+
+
+def _build_author_search_url(*, query: str, start: int) -> str:
+    params: dict[str, int | str] = {
+        "hl": "en",
+        "view_op": "search_authors",
+        "mauthors": query,
+    }
+    if start > 0:
+        params["astart"] = int(start)
+    return f"{SCHOLAR_PROFILE_URL}?{urlencode(params)}"

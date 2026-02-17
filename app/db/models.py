@@ -119,6 +119,11 @@ class ScholarProfile(Base):
     )
     scholar_id: Mapped[str] = mapped_column(String(64), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255))
+    profile_image_url: Mapped[str | None] = mapped_column(Text)
+    profile_image_override_url: Mapped[str | None] = mapped_column(Text)
+    profile_image_upload_path: Mapped[str | None] = mapped_column(Text)
+    last_initial_page_fingerprint_sha256: Mapped[str | None] = mapped_column(String(64))
+    last_initial_page_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
@@ -141,6 +146,15 @@ class CrawlRun(Base):
     __tablename__ = "crawl_runs"
     __table_args__ = (
         Index("ix_crawl_runs_user_start", "user_id", "start_dt"),
+        Index(
+            "uq_crawl_runs_user_manual_idempotency_key",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text(
+                "idempotency_key IS NOT NULL AND trigger_type = 'manual'::run_trigger_type"
+            ),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -163,6 +177,7 @@ class CrawlRun(Base):
     new_pub_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
     error_log: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )

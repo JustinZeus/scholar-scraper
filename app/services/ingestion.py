@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import json
 import logging
 import re
 from typing import Any
@@ -45,6 +46,7 @@ RESUMABLE_PARTIAL_REASONS = {
     "pagination_cursor_stalled",
 }
 RESUMABLE_PARTIAL_REASON_PREFIXES = ("page_state_network_error",)
+INITIAL_PAGE_FINGERPRINT_MAX_PUBLICATIONS = 30
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +65,9 @@ class RunExecutionSummary:
 class PagedParseResult:
     fetch_result: FetchResult
     parsed_page: ParsedProfilePage
+    first_page_fetch_result: FetchResult
+    first_page_parsed_page: ParsedProfilePage
+    first_page_fingerprint_sha256: str | None
     publications: list[PublicationCandidate]
     attempt_log: list[dict[str, Any]]
     page_logs: list[dict[str, Any]]
@@ -71,6 +76,7 @@ class PagedParseResult:
     has_more_remaining: bool
     pagination_truncated_reason: str | None
     continuation_cstart: int | None
+    skipped_no_change: bool
 
 
 class RunAlreadyInProgressError(RuntimeError):
@@ -96,6 +102,7 @@ class ScholarIngestionService:
         start_cstart_by_scholar_id: dict[int, int] | None = None,
         auto_queue_continuations: bool = True,
         queue_delay_seconds: int = 60,
+        idempotency_key: str | None = None,
     ) -> RunExecutionSummary:
         lock_acquired = await self._try_acquire_user_lock(
             db_session,
@@ -153,6 +160,7 @@ class ScholarIngestionService:
                 "retry_backoff_seconds": retry_backoff_seconds,
                 "max_pages_per_scholar": max_pages_per_scholar,
                 "page_size": page_size,
+                "idempotency_key": idempotency_key,
             },
         )
 
@@ -162,6 +170,7 @@ class ScholarIngestionService:
             status=RunStatus.RUNNING,
             scholar_count=len(scholars),
             new_pub_count=0,
+            idempotency_key=idempotency_key,
             error_log={},
         )
         db_session.add(run)
@@ -187,12 +196,24 @@ class ScholarIngestionService:
                 retry_backoff_seconds=retry_backoff_seconds,
                 max_pages=max_pages_per_scholar,
                 page_size=page_size,
+                previous_initial_page_fingerprint_sha256=scholar.last_initial_page_fingerprint_sha256,
             )
             fetch_result = paged_parse_result.fetch_result
             parsed_page = paged_parse_result.parsed_page
             publications = paged_parse_result.publications
             attempt_log = paged_parse_result.attempt_log
             page_logs = paged_parse_result.page_logs
+
+            first_page = paged_parse_result.first_page_parsed_page
+            if first_page.profile_name and not (scholar.display_name or "").strip():
+                scholar.display_name = first_page.profile_name
+            if first_page.profile_image_url:
+                scholar.profile_image_url = first_page.profile_image_url
+            if paged_parse_result.first_page_fingerprint_sha256:
+                scholar.last_initial_page_fingerprint_sha256 = (
+                    paged_parse_result.first_page_fingerprint_sha256
+                )
+            scholar.last_initial_page_checked_at = run_dt
 
             logger.info(
                 "ingestion.scholar_parsed",
@@ -210,6 +231,7 @@ class ScholarIngestionService:
                     "has_more_remaining": paged_parse_result.has_more_remaining,
                     "pagination_truncated_reason": paged_parse_result.pagination_truncated_reason,
                     "warning_count": len(parsed_page.warnings),
+                    "skipped_no_change": paged_parse_result.skipped_no_change,
                 },
             )
 
@@ -230,7 +252,55 @@ class ScholarIngestionService:
                 "has_more_remaining": paged_parse_result.has_more_remaining,
                 "pagination_truncated_reason": paged_parse_result.pagination_truncated_reason,
                 "continuation_cstart": paged_parse_result.continuation_cstart,
+                "skipped_no_change": paged_parse_result.skipped_no_change,
+                "initial_page_fingerprint_sha256": paged_parse_result.first_page_fingerprint_sha256,
             }
+            if paged_parse_result.skipped_no_change:
+                scholar.last_run_status = RunStatus.SUCCESS
+                scholar.last_run_dt = run_dt
+                succeeded_count += 1
+                result_entry["state"] = first_page.state.value
+                result_entry["state_reason"] = "no_change_initial_page_signature"
+                result_entry["outcome"] = "success"
+                result_entry["publication_count"] = 0
+                result_entry["warnings"] = first_page.warnings
+                result_entry["debug"] = {
+                    "state_reason": "no_change_initial_page_signature",
+                    "first_page_fingerprint_sha256": paged_parse_result.first_page_fingerprint_sha256,
+                    "attempt_log": attempt_log,
+                    "page_logs": page_logs,
+                }
+                scholar_results.append(result_entry)
+                queue_reason, queue_cstart = self._resolve_continuation_queue_target(
+                    outcome=str(result_entry.get("outcome", "")),
+                    state=str(result_entry.get("state", "")),
+                    pagination_truncated_reason=paged_parse_result.pagination_truncated_reason,
+                    continuation_cstart=paged_parse_result.continuation_cstart,
+                    fallback_cstart=start_cstart,
+                )
+                if auto_queue_continuations and queue_reason is not None:
+                    await queue_service.upsert_job(
+                        db_session,
+                        user_id=user_id,
+                        scholar_profile_id=scholar.id,
+                        resume_cstart=queue_cstart,
+                        reason=queue_reason,
+                        run_id=run.id,
+                        delay_seconds=queue_delay_seconds,
+                    )
+                    result_entry["continuation_enqueued"] = True
+                    result_entry["continuation_reason"] = queue_reason
+                    result_entry["continuation_cstart"] = queue_cstart
+                else:
+                    cleared = await queue_service.clear_job_for_scholar(
+                        db_session,
+                        user_id=user_id,
+                        scholar_profile_id=scholar.id,
+                    )
+                    if cleared:
+                        result_entry["continuation_cleared"] = True
+                continue
+
             had_page_failure = parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}
             has_partial_publication_set = len(publications) > 0 and had_page_failure
             is_partial_due_to_pagination = (
@@ -373,6 +443,11 @@ class ScholarIngestionService:
                 "failed_state_counts": failed_state_counts,
                 "failed_reason_counts": failed_reason_counts,
             },
+            "meta": {
+                "idempotency_key": idempotency_key,
+            }
+            if idempotency_key
+            else {},
         }
 
         await db_session.commit()
@@ -519,6 +594,7 @@ class ScholarIngestionService:
         retry_backoff_seconds: float,
         max_pages: int,
         page_size: int,
+        previous_initial_page_fingerprint_sha256: str | None = None,
     ) -> PagedParseResult:
         bounded_max_pages = max(1, int(max_pages))
         bounded_page_size = max(1, int(page_size))
@@ -534,6 +610,9 @@ class ScholarIngestionService:
             network_error_retries=network_error_retries,
             retry_backoff_seconds=retry_backoff_seconds,
         )
+        first_page_fetch_result = fetch_result
+        first_page_parsed_page = parsed_page
+        first_page_fingerprint_sha256 = build_initial_page_fingerprint(parsed_page)
 
         attempt_log: list[dict[str, Any]] = list(first_attempt_log)
         page_logs: list[dict[str, Any]] = []
@@ -553,11 +632,39 @@ class ScholarIngestionService:
         )
         pages_attempted = 1
 
+        should_skip_no_change = (
+            start_cstart <= 0
+            and first_page_fingerprint_sha256 is not None
+            and previous_initial_page_fingerprint_sha256 is not None
+            and first_page_fingerprint_sha256 == previous_initial_page_fingerprint_sha256
+            and parsed_page.state in {ParseState.OK, ParseState.NO_RESULTS}
+        )
+        if should_skip_no_change:
+            return PagedParseResult(
+                fetch_result=fetch_result,
+                parsed_page=parsed_page,
+                first_page_fetch_result=first_page_fetch_result,
+                first_page_parsed_page=first_page_parsed_page,
+                first_page_fingerprint_sha256=first_page_fingerprint_sha256,
+                publications=[],
+                attempt_log=attempt_log,
+                page_logs=page_logs,
+                pages_fetched=1,
+                pages_attempted=pages_attempted,
+                has_more_remaining=False,
+                pagination_truncated_reason=None,
+                continuation_cstart=None,
+                skipped_no_change=True,
+            )
+
         # Immediate hard failure: nothing to salvage.
         if parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}:
             return PagedParseResult(
                 fetch_result=fetch_result,
                 parsed_page=parsed_page,
+                first_page_fetch_result=first_page_fetch_result,
+                first_page_parsed_page=first_page_parsed_page,
+                first_page_fingerprint_sha256=first_page_fingerprint_sha256,
                 publications=[],
                 attempt_log=attempt_log,
                 page_logs=page_logs,
@@ -568,6 +675,7 @@ class ScholarIngestionService:
                 continuation_cstart=(
                     start_cstart if parsed_page.state == ParseState.NETWORK_ERROR else None
                 ),
+                skipped_no_change=False,
             )
 
         publications = list(parsed_page.publications)
@@ -649,6 +757,9 @@ class ScholarIngestionService:
         return PagedParseResult(
             fetch_result=fetch_result,
             parsed_page=parsed_page,
+            first_page_fetch_result=first_page_fetch_result,
+            first_page_parsed_page=first_page_parsed_page,
+            first_page_fingerprint_sha256=first_page_fingerprint_sha256,
             publications=_dedupe_publication_candidates(publications),
             attempt_log=attempt_log,
             page_logs=page_logs,
@@ -657,6 +768,7 @@ class ScholarIngestionService:
             has_more_remaining=has_more_remaining,
             pagination_truncated_reason=pagination_truncated_reason,
             continuation_cstart=continuation_cstart,
+            skipped_no_change=False,
         )
 
     async def _upsert_profile_publications(
@@ -838,6 +950,7 @@ class ScholarIngestionService:
             "fetch_error": fetch_result.error,
             "state_reason": parsed_page.state_reason,
             "profile_name": parsed_page.profile_name,
+            "profile_image_url": parsed_page.profile_image_url,
             "articles_range": parsed_page.articles_range,
             "has_show_more_button": parsed_page.has_show_more_button,
             "has_operation_error_banner": parsed_page.has_operation_error_banner,
@@ -910,6 +1023,37 @@ def build_publication_fingerprint(candidate: PublicationCandidate) -> str:
             _first_author_last_name(candidate.authors_text),
             _first_venue_word(candidate.venue_text),
         ]
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def build_initial_page_fingerprint(parsed_page: ParsedProfilePage) -> str | None:
+    if parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}:
+        return None
+
+    normalized_rows: list[dict[str, Any]] = []
+    for publication in parsed_page.publications[:INITIAL_PAGE_FINGERPRINT_MAX_PUBLICATIONS]:
+        normalized_rows.append(
+            {
+                "cluster_id": publication.cluster_id or "",
+                "title_normalized": normalize_title(publication.title),
+                "year": publication.year,
+                "citation_count": publication.citation_count,
+            }
+        )
+
+    payload = {
+        "state": parsed_page.state.value,
+        "articles_range": parsed_page.articles_range or "",
+        "has_show_more_button": parsed_page.has_show_more_button,
+        "profile_name": parsed_page.profile_name or "",
+        "publications": normalized_rows,
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

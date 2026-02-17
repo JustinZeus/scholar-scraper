@@ -48,7 +48,7 @@ class Settings:
     log_format: str = _env_str("LOG_FORMAT", "console")
     log_requests: bool = _env_bool("LOG_REQUESTS", True)
     log_uvicorn_access: bool = _env_bool("LOG_UVICORN_ACCESS", False)
-    log_request_skip_paths: str = _env_str("LOG_REQUEST_SKIP_PATHS", "/healthz,/static/")
+    log_request_skip_paths: str = _env_str("LOG_REQUEST_SKIP_PATHS", "/healthz")
     log_redact_fields: str = os.getenv("LOG_REDACT_FIELDS", "")
     scheduler_enabled: bool = _env_bool("SCHEDULER_ENABLED", True)
     scheduler_tick_seconds: int = _env_int("SCHEDULER_TICK_SECONDS", 60)
@@ -79,6 +79,45 @@ class Settings:
         6,
     )
     scheduler_queue_batch_size: int = _env_int("SCHEDULER_QUEUE_BATCH_SIZE", 10)
+    frontend_enabled: bool = _env_bool("FRONTEND_ENABLED", True)
+    frontend_dist_dir: str = _env_str("FRONTEND_DIST_DIR", "/app/frontend/dist")
+    scholar_image_upload_dir: str = _env_str(
+        "SCHOLAR_IMAGE_UPLOAD_DIR",
+        "/var/lib/scholarr/uploads",
+    )
+    scholar_image_upload_max_bytes: int = _env_int(
+        "SCHOLAR_IMAGE_UPLOAD_MAX_BYTES",
+        2_000_000,
+    )
+    scholar_name_search_enabled: bool = _env_bool("SCHOLAR_NAME_SEARCH_ENABLED", True)
+    scholar_name_search_cache_ttl_seconds: int = _env_int(
+        "SCHOLAR_NAME_SEARCH_CACHE_TTL_SECONDS",
+        21_600,
+    )
+    scholar_name_search_blocked_cache_ttl_seconds: int = _env_int(
+        "SCHOLAR_NAME_SEARCH_BLOCKED_CACHE_TTL_SECONDS",
+        300,
+    )
+    scholar_name_search_cache_max_entries: int = _env_int(
+        "SCHOLAR_NAME_SEARCH_CACHE_MAX_ENTRIES",
+        512,
+    )
+    scholar_name_search_min_interval_seconds: float = _env_float(
+        "SCHOLAR_NAME_SEARCH_MIN_INTERVAL_SECONDS",
+        3.0,
+    )
+    scholar_name_search_interval_jitter_seconds: float = _env_float(
+        "SCHOLAR_NAME_SEARCH_INTERVAL_JITTER_SECONDS",
+        1.0,
+    )
+    scholar_name_search_cooldown_block_threshold: int = _env_int(
+        "SCHOLAR_NAME_SEARCH_COOLDOWN_BLOCK_THRESHOLD",
+        1,
+    )
+    scholar_name_search_cooldown_seconds: int = _env_int(
+        "SCHOLAR_NAME_SEARCH_COOLDOWN_SECONDS",
+        1800,
+    )
 
 
 settings = Settings()

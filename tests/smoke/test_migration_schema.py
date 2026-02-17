@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 @pytest.mark.asyncio
 async def test_schema_head_revision_is_available(db_session: AsyncSession) -> None:
     result = await db_session.execute(text("SELECT version_num FROM alembic_version"))
-    assert result.scalar_one() == "20260217_0004"
+    assert result.scalar_one() == "20260217_0007"
 
 
 @pytest.mark.integration

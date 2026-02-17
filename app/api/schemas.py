@@ -112,6 +112,8 @@ class ScholarItemData(BaseModel):
     id: int
     scholar_id: str
     display_name: str | None
+    profile_image_url: str | None
+    profile_image_source: str
     is_enabled: bool
     baseline_completed: bool
     last_run_dt: datetime | None
@@ -135,7 +137,7 @@ class ScholarsListEnvelope(BaseModel):
 
 class ScholarCreateRequest(BaseModel):
     scholar_id: str
-    display_name: str | None = None
+    profile_image_url: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -143,6 +145,43 @@ class ScholarCreateRequest(BaseModel):
 class ScholarEnvelope(BaseModel):
     data: ScholarItemData
     meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScholarSearchCandidateData(BaseModel):
+    scholar_id: str
+    display_name: str
+    affiliation: str | None
+    email_domain: str | None
+    cited_by_count: int | None
+    interests: list[str] = Field(default_factory=list)
+    profile_url: str
+    profile_image_url: str | None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScholarSearchData(BaseModel):
+    query: str
+    state: str
+    state_reason: str
+    action_hint: str | None = None
+    candidates: list[ScholarSearchCandidateData]
+    warnings: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScholarSearchEnvelope(BaseModel):
+    data: ScholarSearchData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScholarImageUrlUpdateRequest(BaseModel):
+    image_url: str
 
     model_config = ConfigDict(extra="forbid")
 
@@ -451,6 +490,34 @@ class MarkAllReadData(BaseModel):
 
 class MarkAllReadEnvelope(BaseModel):
     data: MarkAllReadData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PublicationSelectionItem(BaseModel):
+    scholar_profile_id: int
+    publication_id: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MarkSelectedReadRequest(BaseModel):
+    selections: list[PublicationSelectionItem] = Field(min_length=1, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MarkSelectedReadData(BaseModel):
+    message: str
+    requested_count: int
+    updated_count: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MarkSelectedReadEnvelope(BaseModel):
+    data: MarkSelectedReadData
     meta: ApiMeta
 
     model_config = ConfigDict(extra="forbid")

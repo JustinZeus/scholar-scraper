@@ -10,3 +10,6 @@ htmlcov/
 .uv-cache/
 .env
 *.log
+planning/
+frontend/node_modules/
+frontend/dist/

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.runtime_deps import get_scholar_source
 from app.main import app
+from app.services.scholar_source import FetchResult
+from app.settings import settings
 from tests.integration.helpers import insert_user, login_user
 
 
@@ -299,14 +304,14 @@ async def test_api_scholars_crud_flow(db_session: AsyncSession) -> None:
 
     missing_csrf = client.post(
         "/api/v1/scholars",
-        json={"scholar_id": "abcDEF123456", "display_name": "Ada"},
+        json={"scholar_id": "abcDEF123456"},
     )
     assert missing_csrf.status_code == 403
     assert missing_csrf.json()["error"]["code"] == "csrf_invalid"
 
     create_response = client.post(
         "/api/v1/scholars",
-        json={"scholar_id": "abcDEF123456", "display_name": "Ada"},
+        json={"scholar_id": "abcDEF123456"},
         headers=headers,
     )
     assert create_response.status_code == 201
@@ -332,6 +337,243 @@ async def test_api_scholars_crud_flow(db_session: AsyncSession) -> None:
     )
     assert delete_response.status_code == 200
     assert delete_response.json()["data"]["message"] == "Scholar deleted."
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_scholars_search_and_profile_image_management(
+    db_session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    await insert_user(
+        db_session,
+        email="api-scholar-images@example.com",
+        password="api-password",
+    )
+
+    class StubScholarSource:
+        async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+            assert scholar_id == "abcDEF123456"
+            return FetchResult(
+                requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+                status_code=200,
+                final_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+                body=(
+                    "<html><head>"
+                    '<meta property="og:image" content="https://images.example.com/ada.png" />'
+                    "</head><body>"
+                    '<div id="gsc_prf_in">Ada Lovelace</div>'
+                    "</body></html>"
+                ),
+                error=None,
+            )
+
+        async def fetch_author_search_html(self, query: str, *, start: int) -> FetchResult:
+            assert query == "Ada Lovelace"
+            assert start == 0
+            return FetchResult(
+                requested_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=ada",
+                status_code=200,
+                final_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=ada",
+                body=(
+                    '<div class="gsc_1usr">'
+                    '<img src="/citations/images/avatar_scholar_256.png" />'
+                    '<a class="gs_ai_name" href="/citations?hl=en&user=abcDEF123456">Ada Lovelace</a>'
+                    '<div class="gs_ai_aff">Analytical Engine</div>'
+                    '<div class="gs_ai_eml">Verified email at computing.example</div>'
+                    '<div class="gs_ai_cby">Cited by 42</div>'
+                    '<a class="gs_ai_one_int">Mathematics</a>'
+                    "</div>"
+                ),
+                error=None,
+            )
+
+    previous_upload_dir = settings.scholar_image_upload_dir
+    previous_upload_max_bytes = settings.scholar_image_upload_max_bytes
+    app.dependency_overrides[get_scholar_source] = lambda: StubScholarSource()
+    object.__setattr__(settings, "scholar_image_upload_dir", str(tmp_path / "scholar_images"))
+    object.__setattr__(settings, "scholar_image_upload_max_bytes", 1_000_000)
+
+    try:
+        client = TestClient(app)
+        login_user(client, email="api-scholar-images@example.com", password="api-password")
+        headers = _api_csrf_headers(client)
+
+        search_response = client.get("/api/v1/scholars/search", params={"query": "Ada Lovelace", "limit": 5})
+        assert search_response.status_code == 200
+        search_payload = search_response.json()["data"]
+        assert search_payload["state"] == "ok"
+        assert len(search_payload["candidates"]) == 1
+        candidate = search_payload["candidates"][0]
+        assert candidate["scholar_id"] == "abcDEF123456"
+        assert candidate["profile_image_url"] == "https://scholar.google.com/citations/images/avatar_scholar_256.png"
+
+        create_response = client.post(
+            "/api/v1/scholars",
+            json={
+                "scholar_id": candidate["scholar_id"],
+            },
+            headers=headers,
+        )
+        assert create_response.status_code == 201
+        created = create_response.json()["data"]
+        scholar_profile_id = int(created["id"])
+        assert created["profile_image_source"] == "scraped"
+        assert created["profile_image_url"] == "https://images.example.com/ada.png"
+
+        set_url_response = client.put(
+            f"/api/v1/scholars/{scholar_profile_id}/image/url",
+            json={"image_url": "https://cdn.example.com/custom-avatar.png"},
+            headers=headers,
+        )
+        assert set_url_response.status_code == 200
+        set_url_data = set_url_response.json()["data"]
+        assert set_url_data["profile_image_source"] == "override"
+        assert set_url_data["profile_image_url"] == "https://cdn.example.com/custom-avatar.png"
+
+        uploaded_bytes = b"\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\rIHDR\\x00\\x00\\x00\\x01\\x00\\x00\\x00\\x01"
+        upload_response = client.post(
+            f"/api/v1/scholars/{scholar_profile_id}/image/upload",
+            files={"image": ("avatar.png", uploaded_bytes, "image/png")},
+            headers=headers,
+        )
+        assert upload_response.status_code == 200
+        upload_data = upload_response.json()["data"]
+        assert upload_data["profile_image_source"] == "upload"
+        assert upload_data["profile_image_url"] == f"/api/v1/scholars/{scholar_profile_id}/image/upload"
+
+        uploaded_image_response = client.get(f"/api/v1/scholars/{scholar_profile_id}/image/upload")
+        assert uploaded_image_response.status_code == 200
+        assert uploaded_image_response.headers["content-type"].startswith("image/png")
+        assert uploaded_image_response.content == uploaded_bytes
+
+        clear_response = client.delete(
+            f"/api/v1/scholars/{scholar_profile_id}/image",
+            headers=headers,
+        )
+        assert clear_response.status_code == 200
+        clear_data = clear_response.json()["data"]
+        assert clear_data["profile_image_source"] == "scraped"
+        assert clear_data["profile_image_url"] == "https://images.example.com/ada.png"
+    finally:
+        app.dependency_overrides.pop(get_scholar_source, None)
+        object.__setattr__(settings, "scholar_image_upload_dir", previous_upload_dir)
+        object.__setattr__(
+            settings,
+            "scholar_image_upload_max_bytes",
+            previous_upload_max_bytes,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_manual_run_skips_unchanged_initial_page_for_scholar(
+    db_session: AsyncSession,
+) -> None:
+    await insert_user(
+        db_session,
+        email="api-skip-unchanged@example.com",
+        password="api-password",
+    )
+
+    profile_html = """
+    <html>
+      <head>
+        <meta property="og:image" content="https://images.example.com/skip.png" />
+      </head>
+      <body>
+        <div id="gsc_prf_in">Skip Candidate</div>
+        <span id="gsc_a_nn">Articles 1-1</span>
+        <table>
+          <tbody id="gsc_a_b">
+            <tr class="gsc_a_tr">
+              <td class="gsc_a_t">
+                <a class="gsc_a_at" href="/citations?view_op=view_citation&citation_for_view=abcDEF123456:xyz123">Stable Paper</a>
+                <div class="gs_gray">A Author</div>
+                <div class="gs_gray">Stable Venue</div>
+              </td>
+              <td class="gsc_a_c"><a class="gsc_a_ac">5</a></td>
+              <td class="gsc_a_y"><span class="gsc_a_h">2024</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </body>
+    </html>
+    """
+
+    class StubScholarSource:
+        async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+            assert scholar_id == "abcDEF123456"
+            return FetchResult(
+                requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+                status_code=200,
+                final_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+                body=profile_html,
+                error=None,
+            )
+
+        async def fetch_profile_page_html(
+            self,
+            scholar_id: str,
+            *,
+            cstart: int,
+            pagesize: int,
+        ) -> FetchResult:
+            assert scholar_id == "abcDEF123456"
+            assert cstart == 0
+            assert pagesize == settings.ingestion_page_size
+            return FetchResult(
+                requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+                status_code=200,
+                final_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+                body=profile_html,
+                error=None,
+            )
+
+    app.dependency_overrides[get_scholar_source] = lambda: StubScholarSource()
+    try:
+        client = TestClient(app)
+        login_user(client, email="api-skip-unchanged@example.com", password="api-password")
+        headers = _api_csrf_headers(client)
+
+        create_response = client.post(
+            "/api/v1/scholars",
+            json={"scholar_id": "abcDEF123456"},
+            headers=headers,
+        )
+        assert create_response.status_code == 201
+
+        first_run_response = client.post(
+            "/api/v1/runs/manual",
+            headers={**headers, "Idempotency-Key": "skip-unchanged-run-001"},
+        )
+        assert first_run_response.status_code == 200
+        first_run_id = int(first_run_response.json()["data"]["run_id"])
+
+        first_run_detail = client.get(f"/api/v1/runs/{first_run_id}")
+        assert first_run_detail.status_code == 200
+        first_results = first_run_detail.json()["data"]["scholar_results"]
+        assert len(first_results) == 1
+        assert first_results[0]["state_reason"] != "no_change_initial_page_signature"
+
+        second_run_response = client.post(
+            "/api/v1/runs/manual",
+            headers={**headers, "Idempotency-Key": "skip-unchanged-run-002"},
+        )
+        assert second_run_response.status_code == 200
+        second_run_id = int(second_run_response.json()["data"]["run_id"])
+
+        second_run_detail = client.get(f"/api/v1/runs/{second_run_id}")
+        assert second_run_detail.status_code == 200
+        second_results = second_run_detail.json()["data"]["scholar_results"]
+        assert len(second_results) == 1
+        assert second_results[0]["state_reason"] == "no_change_initial_page_signature"
+        assert second_results[0]["publication_count"] == 0
+        assert second_results[0]["outcome"] == "success"
+    finally:
+        app.dependency_overrides.pop(get_scholar_source, None)
 
 
 @pytest.mark.integration
@@ -392,6 +634,13 @@ async def test_api_runs_manual_and_queue_actions(db_session: AsyncSession) -> No
     assert run_payload["status"] in {"success", "partial_failure", "failed"}
     assert run_payload["reused_existing_run"] is False
     assert run_payload["idempotency_key"] == "manual-run-0001"
+    run_id = int(run_payload["run_id"])
+
+    stored_key = await db_session.execute(
+        text("SELECT idempotency_key FROM crawl_runs WHERE id = :run_id"),
+        {"run_id": run_id},
+    )
+    assert stored_key.scalar_one() == "manual-run-0001"
 
     replay_response = client.post(
         "/api/v1/runs/manual",
@@ -405,7 +654,6 @@ async def test_api_runs_manual_and_queue_actions(db_session: AsyncSession) -> No
     runs_response = client.get("/api/v1/runs")
     assert runs_response.status_code == 200
     assert len(runs_response.json()["data"]["runs"]) >= 1
-    run_id = int(run_payload["run_id"])
 
     run_detail_response = client.get(f"/api/v1/runs/{run_id}")
     assert run_detail_response.status_code == 200
@@ -497,11 +745,76 @@ async def test_api_runs_manual_and_queue_actions(db_session: AsyncSession) -> No
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_api_publications_list_and_mark_read(db_session: AsyncSession) -> None:
-    await insert_user(
+    user_id = await insert_user(
         db_session,
         email="api-pubs@example.com",
         password="api-password",
     )
+
+    scholar_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            RETURNING id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "abcDEF123456",
+            "display_name": "Publication Owner",
+        },
+    )
+    scholar_profile_id = int(scholar_result.scalar_one())
+
+    publication_a = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 10)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint": f"{user_id:064x}",
+            "title_raw": "Paper A",
+            "title_normalized": "paper a",
+        },
+    )
+    publication_a_id = int(publication_a.scalar_one())
+
+    publication_b = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 4)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint": f"{(user_id + 1):064x}",
+            "title_raw": "Paper B",
+            "title_normalized": "paper b",
+        },
+    )
+    publication_b_id = int(publication_b.scalar_one())
+
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read)
+            VALUES
+              (:scholar_profile_id, :publication_a_id, false),
+              (:scholar_profile_id, :publication_b_id, false)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_profile_id,
+            "publication_a_id": publication_a_id,
+            "publication_b_id": publication_b_id,
+        },
+    )
+    await db_session.commit()
 
     client = TestClient(app)
     login_user(client, email="api-pubs@example.com", password="api-password")
@@ -512,7 +825,39 @@ async def test_api_publications_list_and_mark_read(db_session: AsyncSession) -> 
     data = list_response.json()["data"]
     assert data["mode"] == "all"
     assert isinstance(data["publications"], list)
+    assert len(data["publications"]) == 2
+
+    mark_selected_response = client.post(
+        "/api/v1/publications/mark-read",
+        json={
+            "selections": [
+                {
+                    "scholar_profile_id": scholar_profile_id,
+                    "publication_id": publication_a_id,
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert mark_selected_response.status_code == 200
+    assert mark_selected_response.json()["data"]["requested_count"] == 1
+    assert mark_selected_response.json()["data"]["updated_count"] == 1
+
+    read_state = await db_session.execute(
+        text(
+            """
+            SELECT publication_id, is_read
+            FROM scholar_publications
+            WHERE scholar_profile_id = :scholar_profile_id
+            ORDER BY publication_id
+            """
+        ),
+        {"scholar_profile_id": scholar_profile_id},
+    )
+    states = {int(row[0]): bool(row[1]) for row in read_state.all()}
+    assert states[publication_a_id] is True
+    assert states[publication_b_id] is False
 
     mark_response = client.post("/api/v1/publications/mark-all-read", headers=headers)
     assert mark_response.status_code == 200
-    assert "updated_count" in mark_response.json()["data"]
+    assert mark_response.json()["data"]["updated_count"] == 1

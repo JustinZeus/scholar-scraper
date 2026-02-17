@@ -6,7 +6,7 @@ from enum import StrEnum
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from app.services.scholar_source import FetchResult
 
@@ -16,6 +16,8 @@ BLOCKED_KEYWORDS = [
     "not a robot",
     "our systems have detected",
     "automated queries",
+    "recaptcha",
+    "captcha",
 ]
 
 NO_RESULTS_KEYWORDS = [
@@ -23,6 +25,14 @@ NO_RESULTS_KEYWORDS = [
     "did not match any articles",
     "no articles",
     "no documents",
+]
+
+NO_AUTHOR_RESULTS_KEYWORDS = [
+    "didn't match any user profiles",
+    "did not match any user profiles",
+    "didn't match any scholars",
+    "did not match any scholars",
+    "no user profiles",
 ]
 
 MARKER_KEYS = [
@@ -34,6 +44,33 @@ MARKER_KEYS = [
     "gs_gray",
     "gsc_prf_in",
     "gsc_rsb_st",
+]
+
+AUTHOR_SEARCH_MARKER_KEYS = [
+    "gsc_1usr",
+    "gs_ai_name",
+    "gs_ai_aff",
+    "gs_ai_eml",
+    "gs_ai_cby",
+    "gs_ai_one_int",
+]
+
+NETWORK_DNS_ERROR_KEYWORDS = [
+    "temporary failure in name resolution",
+    "name or service not known",
+    "nodename nor servname provided",
+    "getaddrinfo failed",
+]
+
+NETWORK_TIMEOUT_KEYWORDS = [
+    "timed out",
+    "timeout",
+]
+
+NETWORK_TLS_ERROR_KEYWORDS = [
+    "ssl",
+    "tls",
+    "certificate verify failed",
 ]
 
 TAG_RE = re.compile(r"<[^>]+>", re.S)
@@ -64,16 +101,38 @@ class PublicationCandidate:
 
 
 @dataclass(frozen=True)
+class ScholarSearchCandidate:
+    scholar_id: str
+    display_name: str
+    affiliation: str | None
+    email_domain: str | None
+    cited_by_count: int | None
+    interests: list[str]
+    profile_url: str
+    profile_image_url: str | None
+
+
+@dataclass(frozen=True)
 class ParsedProfilePage:
     state: ParseState
     state_reason: str
     profile_name: str | None
+    profile_image_url: str | None
     publications: list[PublicationCandidate]
     marker_counts: dict[str, int]
     warnings: list[str]
     has_show_more_button: bool
     has_operation_error_banner: bool
     articles_range: str | None
+
+
+@dataclass(frozen=True)
+class ParsedAuthorSearchPage:
+    state: ParseState
+    state_reason: str
+    candidates: list[ScholarSearchCandidate]
+    marker_counts: dict[str, int]
+    warnings: list[str]
 
 
 def normalize_space(value: str) -> str:
@@ -96,6 +155,19 @@ def attr_href(attrs: list[tuple[str, str | None]]) -> str | None:
         if name.lower() == "href":
             return raw_value
     return None
+
+
+def attr_src(attrs: list[tuple[str, str | None]]) -> str | None:
+    for name, raw_value in attrs:
+        if name.lower() == "src":
+            return raw_value
+    return None
+
+
+def build_absolute_scholar_url(path_or_url: str | None) -> str | None:
+    if not path_or_url:
+        return None
+    return urljoin("https://scholar.google.com", path_or_url)
 
 
 class ScholarRowParser(HTMLParser):
@@ -197,6 +269,18 @@ def parse_cluster_id_from_href(href: str | None) -> str | None:
     return None
 
 
+def parse_scholar_id_from_href(href: str | None) -> str | None:
+    if not href:
+        return None
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query)
+    user_values = query.get("user")
+    if not user_values:
+        return None
+    candidate = user_values[0].strip()
+    return candidate or None
+
+
 def parse_year(parts: list[str]) -> int | None:
     text = normalize_space(" ".join(parts))
     match = re.search(r"\b(19|20)\d{2}\b", text)
@@ -265,6 +349,30 @@ def extract_profile_name(html: str) -> str | None:
     return value or None
 
 
+def extract_profile_image_url(html: str) -> str | None:
+    og_image_pattern = re.compile(
+        r"<meta[^>]+property=['\"]og:image['\"][^>]+content=['\"]([^'\"]+)['\"][^>]*>",
+        re.I | re.S,
+    )
+    og_match = og_image_pattern.search(html)
+    if og_match:
+        value = normalize_space(og_match.group(1))
+        absolute = build_absolute_scholar_url(value)
+        if absolute:
+            return absolute
+
+    image_pattern = re.compile(
+        r"<img[^>]*\bid=['\"]gsc_prf_pup-img['\"][^>]*\bsrc=['\"]([^'\"]+)['\"][^>]*>",
+        re.I | re.S,
+    )
+    image_match = image_pattern.search(html)
+    if not image_match:
+        return None
+
+    value = normalize_space(image_match.group(1))
+    return build_absolute_scholar_url(value)
+
+
 def extract_articles_range(html: str) -> str | None:
     pattern = re.compile(
         r"<[^>]*\bid\s*=\s*['\"]gsc_a_nn['\"][^>]*>(.*?)</[^>]+>",
@@ -304,6 +412,229 @@ def count_markers(html: str) -> dict[str, int]:
     return {key: lowered.count(key.lower()) for key in MARKER_KEYS}
 
 
+def count_author_search_markers(html: str) -> dict[str, int]:
+    lowered = html.lower()
+    return {key: lowered.count(key.lower()) for key in AUTHOR_SEARCH_MARKER_KEYS}
+
+
+def _extract_verified_email_domain(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r"verified email at\s+(.+)$", value.strip(), re.I)
+    if not match:
+        return None
+    domain = normalize_space(match.group(1))
+    return domain or None
+
+
+class ScholarAuthorSearchParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.candidates: list[ScholarSearchCandidate] = []
+        self._candidate: dict[str, Any] | None = None
+
+    def _begin_candidate(self) -> None:
+        self._candidate = {
+            "depth": 1,
+            "name_href": None,
+            "name_parts": [],
+            "aff_depth": 0,
+            "aff_parts": [],
+            "name_depth": 0,
+            "eml_depth": 0,
+            "eml_parts": [],
+            "cby_depth": 0,
+            "cby_parts": [],
+            "interest_depth": 0,
+            "interest_parts": [],
+            "interests": [],
+            "image_src": None,
+        }
+
+    def _increment_capture_depths(self) -> None:
+        if self._candidate is None:
+            return
+        for key in ("name_depth", "aff_depth", "eml_depth", "cby_depth", "interest_depth"):
+            if self._candidate[key] > 0:
+                self._candidate[key] += 1
+
+    def _finalize_candidate(self) -> None:
+        if self._candidate is None:
+            return
+
+        name = normalize_space("".join(self._candidate["name_parts"]))
+        scholar_id = parse_scholar_id_from_href(self._candidate["name_href"])
+        if not name or not scholar_id:
+            return
+
+        affiliation = normalize_space("".join(self._candidate["aff_parts"])) or None
+        email_domain = _extract_verified_email_domain(
+            normalize_space("".join(self._candidate["eml_parts"])) or None
+        )
+        cited_by_text = normalize_space("".join(self._candidate["cby_parts"]))
+        cited_by_match = re.search(r"\d+", cited_by_text)
+        cited_by_count = int(cited_by_match.group(0)) if cited_by_match else None
+
+        seen_interests: set[str] = set()
+        interests: list[str] = []
+        for interest in self._candidate["interests"]:
+            normalized = normalize_space(interest)
+            if not normalized or normalized in seen_interests:
+                continue
+            seen_interests.add(normalized)
+            interests.append(normalized)
+
+        profile_url = build_absolute_scholar_url(self._candidate["name_href"])
+        if not profile_url:
+            profile_url = (
+                "https://scholar.google.com/citations"
+                f"?hl=en&user={scholar_id}"
+            )
+
+        self.candidates.append(
+            ScholarSearchCandidate(
+                scholar_id=scholar_id,
+                display_name=name,
+                affiliation=affiliation,
+                email_domain=email_domain,
+                cited_by_count=cited_by_count,
+                interests=interests,
+                profile_url=profile_url,
+                profile_image_url=build_absolute_scholar_url(self._candidate["image_src"]),
+            )
+        )
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        classes = attr_class(attrs)
+
+        if self._candidate is None:
+            if tag == "div" and "gsc_1usr" in classes:
+                self._begin_candidate()
+            return
+
+        self._candidate["depth"] += 1
+        self._increment_capture_depths()
+
+        if tag == "a" and "gs_ai_name" in classes:
+            self._candidate["name_depth"] = 1
+            self._candidate["name_href"] = attr_href(attrs)
+            return
+
+        if tag == "div" and "gs_ai_aff" in classes:
+            self._candidate["aff_depth"] = 1
+            return
+
+        if tag == "div" and "gs_ai_eml" in classes:
+            self._candidate["eml_depth"] = 1
+            return
+
+        if tag == "div" and "gs_ai_cby" in classes:
+            self._candidate["cby_depth"] = 1
+            return
+
+        if tag == "a" and "gs_ai_one_int" in classes:
+            self._candidate["interest_depth"] = 1
+            self._candidate["interest_parts"] = []
+            return
+
+        if tag == "img" and self._candidate["image_src"] is None:
+            self._candidate["image_src"] = attr_src(attrs)
+
+    def handle_data(self, data: str) -> None:
+        if self._candidate is None:
+            return
+        if self._candidate["name_depth"] > 0:
+            self._candidate["name_parts"].append(data)
+        if self._candidate["aff_depth"] > 0:
+            self._candidate["aff_parts"].append(data)
+        if self._candidate["eml_depth"] > 0:
+            self._candidate["eml_parts"].append(data)
+        if self._candidate["cby_depth"] > 0:
+            self._candidate["cby_parts"].append(data)
+        if self._candidate["interest_depth"] > 0:
+            self._candidate["interest_parts"].append(data)
+
+    def _decrement_capture_depth(self, key: str) -> bool:
+        if self._candidate is None:
+            return False
+        if self._candidate[key] <= 0:
+            return False
+        self._candidate[key] -= 1
+        return self._candidate[key] == 0
+
+    def handle_endtag(self, _tag: str) -> None:
+        if self._candidate is None:
+            return
+
+        interest_closed = self._decrement_capture_depth("interest_depth")
+        self._decrement_capture_depth("name_depth")
+        self._decrement_capture_depth("aff_depth")
+        self._decrement_capture_depth("eml_depth")
+        self._decrement_capture_depth("cby_depth")
+
+        if interest_closed:
+            interest_text = normalize_space("".join(self._candidate["interest_parts"]))
+            if interest_text:
+                self._candidate["interests"].append(interest_text)
+            self._candidate["interest_parts"] = []
+
+        self._candidate["depth"] -= 1
+        if self._candidate["depth"] > 0:
+            return
+
+        self._finalize_candidate()
+        self._candidate = None
+
+
+def classify_network_error_reason(fetch_error: str | None) -> str:
+    lowered = (fetch_error or "").lower()
+    if lowered:
+        if any(keyword in lowered for keyword in NETWORK_DNS_ERROR_KEYWORDS):
+            return "network_dns_resolution_failed"
+        if any(keyword in lowered for keyword in NETWORK_TIMEOUT_KEYWORDS):
+            return "network_timeout"
+        if any(keyword in lowered for keyword in NETWORK_TLS_ERROR_KEYWORDS):
+            return "network_tls_error"
+        if "connection reset" in lowered:
+            return "network_connection_reset"
+        if "connection refused" in lowered:
+            return "network_connection_refused"
+        if "network is unreachable" in lowered:
+            return "network_unreachable"
+    return "network_error_missing_status_code"
+
+
+def classify_block_or_captcha_reason(
+    *,
+    status_code: int,
+    final_url: str,
+    body_lowered: str,
+) -> str | None:
+    if "accounts.google.com" in final_url and ("signin" in final_url or "servicelogin" in final_url):
+        return "blocked_accounts_redirect"
+    if status_code == 429:
+        return "blocked_http_429_rate_limited"
+    if status_code == 403:
+        if "recaptcha" in body_lowered or "captcha" in body_lowered or "sorry/index" in final_url:
+            return "blocked_http_403_captcha_challenge"
+        return "blocked_http_403_forbidden"
+    if "sorry/index" in final_url or "sorry/index" in body_lowered:
+        return "blocked_google_sorry_challenge"
+    if "our systems have detected" in body_lowered or "unusual traffic" in body_lowered:
+        return "blocked_unusual_traffic_detected"
+    if "automated queries" in body_lowered:
+        return "blocked_automated_queries_detected"
+    if "not a robot" in body_lowered:
+        return "blocked_not_a_robot_challenge"
+    if "recaptcha" in body_lowered:
+        return "blocked_recaptcha_challenge"
+    if "captcha" in body_lowered:
+        return "blocked_captcha_challenge"
+    if any(keyword in body_lowered for keyword in BLOCKED_KEYWORDS):
+        return "blocked_keyword_detected"
+    return None
+
+
 def detect_state(
     fetch_result: FetchResult,
     publications: list[PublicationCandidate],
@@ -312,15 +643,19 @@ def detect_state(
     visible_text: str,
 ) -> tuple[ParseState, str]:
     if fetch_result.status_code is None:
-        return ParseState.NETWORK_ERROR, "network_error_missing_status_code"
+        return ParseState.NETWORK_ERROR, classify_network_error_reason(fetch_result.error)
 
     lowered = fetch_result.body.lower()
     final = (fetch_result.final_url or "").lower()
+    status_code = int(fetch_result.status_code)
 
-    if "accounts.google.com" in final and ("signin" in final or "servicelogin" in final):
-        return ParseState.BLOCKED_OR_CAPTCHA, "blocked_accounts_redirect"
-    if any(keyword in lowered for keyword in BLOCKED_KEYWORDS) or "sorry/index" in final:
-        return ParseState.BLOCKED_OR_CAPTCHA, "blocked_keyword_detected"
+    block_reason = classify_block_or_captcha_reason(
+        status_code=status_code,
+        final_url=final,
+        body_lowered=lowered,
+    )
+    if block_reason is not None:
+        return ParseState.BLOCKED_OR_CAPTCHA, block_reason
 
     if not publications and any(keyword in visible_text for keyword in NO_RESULTS_KEYWORDS):
         return ParseState.NO_RESULTS, "no_results_keyword_detected"
@@ -333,6 +668,40 @@ def detect_state(
         return ParseState.OK, "no_rows_with_known_markers"
 
     return ParseState.OK, "publications_extracted"
+
+
+def detect_author_search_state(
+    fetch_result: FetchResult,
+    candidates: list[ScholarSearchCandidate],
+    marker_counts: dict[str, int],
+    *,
+    visible_text: str,
+) -> tuple[ParseState, str]:
+    if fetch_result.status_code is None:
+        return ParseState.NETWORK_ERROR, classify_network_error_reason(fetch_result.error)
+
+    lowered = fetch_result.body.lower()
+    final = (fetch_result.final_url or "").lower()
+    status_code = int(fetch_result.status_code)
+
+    block_reason = classify_block_or_captcha_reason(
+        status_code=status_code,
+        final_url=final,
+        body_lowered=lowered,
+    )
+    if block_reason is not None:
+        return ParseState.BLOCKED_OR_CAPTCHA, block_reason
+
+    if not candidates and any(keyword in visible_text for keyword in NO_AUTHOR_RESULTS_KEYWORDS):
+        return ParseState.NO_RESULTS, "no_results_keyword_detected"
+
+    if not candidates:
+        has_search_markers = marker_counts.get("gsc_1usr", 0) > 0 or marker_counts.get("gs_ai_name", 0) > 0
+        if not has_search_markers:
+            return ParseState.NO_RESULTS, "no_search_candidates_detected"
+        return ParseState.OK, "search_markers_present_with_empty_results"
+
+    return ParseState.OK, "author_candidates_extracted"
 
 
 def parse_profile_page(fetch_result: FetchResult) -> ParsedProfilePage:
@@ -361,10 +730,37 @@ def parse_profile_page(fetch_result: FetchResult) -> ParsedProfilePage:
         state=state,
         state_reason=state_reason,
         profile_name=extract_profile_name(fetch_result.body),
+        profile_image_url=extract_profile_image_url(fetch_result.body),
         publications=publications,
         marker_counts=marker_counts,
         warnings=warnings,
         has_show_more_button=show_more,
         has_operation_error_banner=operation_error_banner,
         articles_range=extract_articles_range(fetch_result.body),
+    )
+
+
+def parse_author_search_page(fetch_result: FetchResult) -> ParsedAuthorSearchPage:
+    parser = ScholarAuthorSearchParser()
+    parser.feed(fetch_result.body)
+
+    marker_counts = count_author_search_markers(fetch_result.body)
+    visible_text = strip_tags(SCRIPT_STYLE_RE.sub(" ", fetch_result.body)).lower()
+    warnings: list[str] = []
+    if not parser.candidates:
+        warnings.append("no_author_candidates_detected")
+
+    state, state_reason = detect_author_search_state(
+        fetch_result,
+        parser.candidates,
+        marker_counts,
+        visible_text=visible_text,
+    )
+
+    return ParsedAuthorSearchPage(
+        state=state,
+        state_reason=state_reason,
+        candidates=parser.candidates,
+        marker_counts=marker_counts,
+        warnings=warnings,
     )

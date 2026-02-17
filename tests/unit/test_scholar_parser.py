@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.scholar_parser import ParseState, parse_profile_page
+from app.services.scholar_parser import (
+    ParseState,
+    parse_author_search_page,
+    parse_profile_page,
+)
 from app.services.scholar_source import FetchResult
 
 
@@ -30,6 +34,8 @@ def test_parse_profile_page_extracts_core_fields_from_fixture() -> None:
     assert parsed.state == ParseState.OK
     assert parsed.state_reason == "publications_extracted"
     assert parsed.profile_name == "Bangar Raju Cherukuri"
+    assert parsed.profile_image_url
+    assert parsed.profile_image_url.startswith("http")
     assert len(parsed.publications) >= 10
     assert parsed.has_show_more_button is True
     assert parsed.articles_range is not None
@@ -120,7 +126,22 @@ def test_parse_profile_page_reports_network_reason_when_status_missing() -> None
     parsed = parse_profile_page(fetch_result)
 
     assert parsed.state == ParseState.NETWORK_ERROR
-    assert parsed.state_reason == "network_error_missing_status_code"
+    assert parsed.state_reason == "network_timeout"
+
+
+def test_parse_profile_page_reports_dns_network_reason_when_status_missing() -> None:
+    fetch_result = FetchResult(
+        requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+        status_code=None,
+        final_url=None,
+        body="",
+        error="<urlopen error [Errno -3] Temporary failure in name resolution>",
+    )
+
+    parsed = parse_profile_page(fetch_result)
+
+    assert parsed.state == ParseState.NETWORK_ERROR
+    assert parsed.state_reason == "network_dns_resolution_failed"
 
 
 def test_parse_profile_page_ignores_no_results_keyword_inside_script_blocks() -> None:
@@ -238,3 +259,75 @@ def test_parse_profile_page_regression_fixture_blocked_redirect() -> None:
     assert parsed.state_reason == "blocked_accounts_redirect"
     assert parsed.profile_name is None
     assert len(parsed.publications) == 0
+
+
+def test_parse_author_search_page_extracts_candidates_with_image() -> None:
+    html = """
+    <html>
+      <body>
+        <div class="gsc_1usr">
+          <img src="/citations/images/avatar_scholar_256.png" />
+          <a class="gs_ai_name" href="/citations?hl=en&user=abcDEF123456">Ada Lovelace</a>
+          <div class="gs_ai_aff">Analytical Engine Lab</div>
+          <div class="gs_ai_eml">Verified email at computing.example</div>
+          <div class="gs_ai_cby">Cited by 128</div>
+          <a class="gs_ai_one_int">Algorithms</a>
+          <a class="gs_ai_one_int">Mathematics</a>
+        </div>
+      </body>
+    </html>
+    """
+    fetch_result = FetchResult(
+        requested_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=ada",
+        status_code=200,
+        final_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=ada",
+        body=html,
+        error=None,
+    )
+
+    parsed = parse_author_search_page(fetch_result)
+
+    assert parsed.state == ParseState.OK
+    assert parsed.state_reason == "author_candidates_extracted"
+    assert len(parsed.candidates) == 1
+
+    candidate = parsed.candidates[0]
+    assert candidate.scholar_id == "abcDEF123456"
+    assert candidate.display_name == "Ada Lovelace"
+    assert candidate.affiliation == "Analytical Engine Lab"
+    assert candidate.email_domain == "computing.example"
+    assert candidate.cited_by_count == 128
+    assert candidate.interests == ["Algorithms", "Mathematics"]
+    assert candidate.profile_url.startswith("https://scholar.google.com/citations")
+    assert candidate.profile_image_url == "https://scholar.google.com/citations/images/avatar_scholar_256.png"
+
+
+def test_parse_author_search_page_detects_no_results_keyword() -> None:
+    fetch_result = FetchResult(
+        requested_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=nope",
+        status_code=200,
+        final_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=nope",
+        body="<html><body>Your search didn't match any user profiles.</body></html>",
+        error=None,
+    )
+
+    parsed = parse_author_search_page(fetch_result)
+
+    assert parsed.state == ParseState.NO_RESULTS
+    assert parsed.state_reason == "no_results_keyword_detected"
+    assert len(parsed.candidates) == 0
+
+
+def test_parse_author_search_page_classifies_http_429_as_blocked() -> None:
+    fetch_result = FetchResult(
+        requested_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=ada",
+        status_code=429,
+        final_url="https://scholar.google.com/citations?hl=en&view_op=search_authors&mauthors=ada",
+        body="<html><body>Too many requests</body></html>",
+        error=None,
+    )
+
+    parsed = parse_author_search_page(fetch_result)
+
+    assert parsed.state == ParseState.BLOCKED_OR_CAPTCHA
+    assert parsed.state_reason == "blocked_http_429_rate_limited"

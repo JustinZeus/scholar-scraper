@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -152,39 +152,15 @@ async def get_manual_run_by_idempotency_key(
         .where(
             CrawlRun.user_id == user_id,
             CrawlRun.trigger_type == RunTriggerType.MANUAL,
-            CrawlRun.error_log["meta"]["idempotency_key"].astext == idempotency_key,
+            or_(
+                CrawlRun.idempotency_key == idempotency_key,
+                CrawlRun.error_log["meta"]["idempotency_key"].astext == idempotency_key,
+            ),
         )
         .order_by(CrawlRun.start_dt.desc(), CrawlRun.id.desc())
         .limit(1)
     )
     return result.scalar_one_or_none()
-
-
-async def set_manual_run_idempotency_key(
-    db_session: AsyncSession,
-    *,
-    user_id: int,
-    run_id: int,
-    idempotency_key: str,
-) -> bool:
-    run = await get_run_for_user(
-        db_session,
-        user_id=user_id,
-        run_id=run_id,
-    )
-    if run is None:
-        return False
-    if run.trigger_type != RunTriggerType.MANUAL:
-        return False
-
-    payload = dict(run.error_log) if isinstance(run.error_log, dict) else {}
-    meta = payload.get("meta")
-    meta_dict = dict(meta) if isinstance(meta, dict) else {}
-    meta_dict["idempotency_key"] = idempotency_key
-    payload["meta"] = meta_dict
-    run.error_log = payload
-    await db_session.commit()
-    return True
 
 
 async def list_queue_items_for_user(

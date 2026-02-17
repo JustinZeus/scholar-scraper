@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_api_current_user
 from app.api.errors import ApiException
 from app.api.responses import success_payload
-from app.api.schemas import MarkAllReadEnvelope, PublicationsListEnvelope
+from app.api.schemas import (
+    MarkAllReadEnvelope,
+    MarkSelectedReadEnvelope,
+    MarkSelectedReadRequest,
+    PublicationsListEnvelope,
+)
 from app.db.models import User
 from app.db.session import get_db_session
 from app.services import publications as publication_service
@@ -118,6 +123,46 @@ async def mark_all_publications_read(
         request,
         data={
             "message": "Marked all unread publications as read.",
+            "updated_count": updated_count,
+        },
+    )
+
+
+@router.post(
+    "/mark-read",
+    response_model=MarkSelectedReadEnvelope,
+)
+async def mark_selected_publications_read(
+    payload: MarkSelectedReadRequest,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    selection_pairs = sorted(
+        {
+            (int(item.scholar_profile_id), int(item.publication_id))
+            for item in payload.selections
+        }
+    )
+    updated_count = await publication_service.mark_selected_as_read_for_user(
+        db_session,
+        user_id=current_user.id,
+        selections=selection_pairs,
+    )
+    logger.info(
+        "api.publications.mark_selected_read",
+        extra={
+            "event": "api.publications.mark_selected_read",
+            "user_id": current_user.id,
+            "requested_count": len(selection_pairs),
+            "updated_count": updated_count,
+        },
+    )
+    return success_payload(
+        request,
+        data={
+            "message": "Marked selected publications as read.",
+            "requested_count": len(selection_pairs),
             "updated_count": updated_count,
         },
     )

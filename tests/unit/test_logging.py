@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
 from app.logging_config import JsonLogFormatter, parse_redact_fields
 from app.main import app
-from app.web.middleware import REQUEST_ID_HEADER, parse_skip_paths
+from app.http.middleware import REQUEST_ID_HEADER, parse_skip_paths
 
 
 def test_json_log_formatter_redacts_sensitive_fields() -> None:
@@ -39,14 +40,16 @@ def test_json_log_formatter_redacts_sensitive_fields() -> None:
     assert "color_message" not in payload
 
 
-def test_request_logging_middleware_sets_request_id_header() -> None:
+def test_request_logging_middleware_sets_request_id_header(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.check_database", AsyncMock(return_value=True))
     client = TestClient(app)
-
-    response = client.get("/login", headers={REQUEST_ID_HEADER: "request-123"})
-
+    response = client.get("/healthz", headers={REQUEST_ID_HEADER: "request-123"})
     assert response.status_code == 200
     assert response.headers[REQUEST_ID_HEADER] == "request-123"
 
 
 def test_parse_skip_paths_trims_and_discards_empty_segments() -> None:
-    assert parse_skip_paths(" /healthz , , /static/ ") == ("/healthz", "/static/")
+    assert parse_skip_paths(" /healthz , , /api/v1/metrics ") == (
+        "/healthz",
+        "/api/v1/metrics",
+    )

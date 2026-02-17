@@ -6,7 +6,7 @@ from app.main import app
 
 
 def test_healthz_returns_200_when_database_is_available(monkeypatch) -> None:
-    monkeypatch.setattr("app.web.routers.health.check_database", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.main.check_database", AsyncMock(return_value=True))
     client = TestClient(app)
 
     response = client.get("/healthz")
@@ -16,7 +16,7 @@ def test_healthz_returns_200_when_database_is_available(monkeypatch) -> None:
 
 
 def test_healthz_returns_500_when_database_is_unavailable(monkeypatch) -> None:
-    monkeypatch.setattr("app.web.routers.health.check_database", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.main.check_database", AsyncMock(return_value=False))
     client = TestClient(app)
 
     response = client.get("/healthz")

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>scholarr</title>
+    <script>
+      (function () {
+        var storageKey = "scholarr-theme-preference";
+        var root = document.documentElement;
+        var stored = null;
+        try {
+          stored = localStorage.getItem(storageKey);
+        } catch (_err) {
+          stored = null;
+        }
+
+        var preference = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+        var systemDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var effective = preference === "system" ? (systemDark ? "dark" : "light") : preference;
+
+        root.classList.toggle("dark", effective === "dark");
+        root.setAttribute("data-theme-preference", preference);
+      })();
+    </script>
+  </head>
+  <body class="h-full">
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

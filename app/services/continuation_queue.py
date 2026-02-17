@@ -181,6 +181,23 @@ async def increment_attempt_count(
     return item
 
 
+async def reset_attempt_count(
+    db_session: AsyncSession,
+    *,
+    job_id: int,
+) -> IngestionQueueItem | None:
+    now = datetime.now(timezone.utc)
+    result = await db_session.execute(
+        select(IngestionQueueItem).where(IngestionQueueItem.id == job_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        return None
+    item.attempt_count = 0
+    item.updated_at = now
+    return item
+
+
 async def reschedule_job(
     db_session: AsyncSession,
     *,

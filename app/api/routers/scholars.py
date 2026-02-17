@@ -1,33 +1,56 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import mimetypes
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_api_current_user
 from app.api.errors import ApiException
 from app.api.responses import success_payload
+from app.api.runtime_deps import get_scholar_source
 from app.api.schemas import (
     MessageEnvelope,
     ScholarCreateRequest,
     ScholarEnvelope,
+    ScholarImageUrlUpdateRequest,
+    ScholarSearchEnvelope,
     ScholarsListEnvelope,
 )
 from app.db.models import User
 from app.db.session import get_db_session
 from app.services import scholars as scholar_service
+from app.services.scholar_source import ScholarSource
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scholars", tags=["api-scholars"])
 
 
+def _uploaded_image_api_path(scholar_profile_id: int) -> str:
+    return f"/api/v1/scholars/{scholar_profile_id}/image/upload"
+
+
 def _serialize_scholar(profile) -> dict[str, object]:
+    uploaded_image_url = None
+    if profile.profile_image_upload_path:
+        uploaded_image_url = _uploaded_image_api_path(int(profile.id))
+
+    profile_image_url, profile_image_source = scholar_service.resolve_profile_image(
+        profile,
+        uploaded_image_url=uploaded_image_url,
+    )
+
     return {
         "id": int(profile.id),
         "scholar_id": profile.scholar_id,
         "display_name": profile.display_name,
+        "profile_image_url": profile_image_url,
+        "profile_image_source": profile_image_source,
         "is_enabled": bool(profile.is_enabled),
         "baseline_completed": bool(profile.baseline_completed),
         "last_run_dt": profile.last_run_dt,
@@ -67,6 +90,7 @@ async def create_scholar(
     payload: ScholarCreateRequest,
     request: Request,
     db_session: AsyncSession = Depends(get_db_session),
+    source: ScholarSource = Depends(get_scholar_source),
     current_user: User = Depends(get_api_current_user),
 ):
     try:
@@ -74,7 +98,8 @@ async def create_scholar(
             db_session,
             user_id=current_user.id,
             scholar_id=payload.scholar_id,
-            display_name=payload.display_name or "",
+            display_name="",
+            profile_image_url=payload.profile_image_url,
         )
     except scholar_service.ScholarServiceError as exc:
         raise ApiException(
@@ -90,9 +115,101 @@ async def create_scholar(
             "scholar_profile_id": created.id,
         },
     )
+    try:
+        if not created.profile_image_url or not (created.display_name or "").strip():
+            created = await asyncio.wait_for(
+                scholar_service.hydrate_profile_metadata(
+                    db_session,
+                    profile=created,
+                    source=source,
+                ),
+                timeout=5.0,
+            )
+    except Exception:
+        logger.warning(
+            "api.scholars.create_metadata_hydration_failed",
+            extra={
+                "event": "api.scholars.create_metadata_hydration_failed",
+                "user_id": current_user.id,
+                "scholar_profile_id": created.id,
+            },
+        )
+
     return success_payload(
         request,
         data=_serialize_scholar(created),
+    )
+
+
+@router.get(
+    "/search",
+    response_model=ScholarSearchEnvelope,
+)
+async def search_scholars(
+    request: Request,
+    query: str = Query(..., min_length=2, max_length=120),
+    limit: int = Query(10, ge=1, le=25),
+    source: ScholarSource = Depends(get_scholar_source),
+    current_user: User = Depends(get_api_current_user),
+):
+    try:
+        parsed = await scholar_service.search_author_candidates(
+            source=source,
+            query=query,
+            limit=limit,
+            network_error_retries=settings.ingestion_network_error_retries,
+            retry_backoff_seconds=settings.ingestion_retry_backoff_seconds,
+            search_enabled=settings.scholar_name_search_enabled,
+            cache_ttl_seconds=settings.scholar_name_search_cache_ttl_seconds,
+            blocked_cache_ttl_seconds=settings.scholar_name_search_blocked_cache_ttl_seconds,
+            cache_max_entries=settings.scholar_name_search_cache_max_entries,
+            min_interval_seconds=settings.scholar_name_search_min_interval_seconds,
+            interval_jitter_seconds=settings.scholar_name_search_interval_jitter_seconds,
+            cooldown_block_threshold=settings.scholar_name_search_cooldown_block_threshold,
+            cooldown_seconds=settings.scholar_name_search_cooldown_seconds,
+        )
+    except scholar_service.ScholarServiceError as exc:
+        raise ApiException(
+            status_code=400,
+            code="invalid_scholar_search",
+            message=str(exc),
+        ) from exc
+
+    logger.info(
+        "api.scholars.search.completed",
+        extra={
+            "event": "api.scholars.search.completed",
+            "user_id": current_user.id,
+            "query": query.strip(),
+            "candidate_count": len(parsed.candidates),
+            "state": parsed.state.value,
+        },
+    )
+    return success_payload(
+        request,
+        data={
+            "query": query.strip(),
+            "state": parsed.state.value,
+            "state_reason": parsed.state_reason,
+            "action_hint": scholar_service.scrape_state_hint(
+                state=parsed.state,
+                state_reason=parsed.state_reason,
+            ),
+            "candidates": [
+                {
+                    "scholar_id": item.scholar_id,
+                    "display_name": item.display_name,
+                    "affiliation": item.affiliation,
+                    "email_domain": item.email_domain,
+                    "cited_by_count": item.cited_by_count,
+                    "interests": item.interests,
+                    "profile_url": item.profile_url,
+                    "profile_image_url": item.profile_image_url,
+                }
+                for item in parsed.candidates
+            ],
+            "warnings": parsed.warnings,
+        },
     )
 
 
@@ -154,7 +271,11 @@ async def delete_scholar(
             code="scholar_not_found",
             message="Scholar not found.",
         )
-    await scholar_service.delete_scholar(db_session, profile=profile)
+    await scholar_service.delete_scholar(
+        db_session,
+        profile=profile,
+        upload_dir=settings.scholar_image_upload_dir,
+    )
     logger.info(
         "api.scholars.deleted",
         extra={
@@ -167,3 +288,202 @@ async def delete_scholar(
         request,
         data={"message": "Scholar deleted."},
     )
+
+
+@router.put(
+    "/{scholar_profile_id}/image/url",
+    response_model=ScholarEnvelope,
+)
+async def update_scholar_image_url(
+    scholar_profile_id: int,
+    payload: ScholarImageUrlUpdateRequest,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    profile = await scholar_service.get_user_scholar_by_id(
+        db_session,
+        user_id=current_user.id,
+        scholar_profile_id=scholar_profile_id,
+    )
+    if profile is None:
+        raise ApiException(
+            status_code=404,
+            code="scholar_not_found",
+            message="Scholar not found.",
+        )
+
+    try:
+        updated = await scholar_service.set_profile_image_override_url(
+            db_session,
+            profile=profile,
+            image_url=payload.image_url,
+            upload_dir=settings.scholar_image_upload_dir,
+        )
+    except scholar_service.ScholarServiceError as exc:
+        raise ApiException(
+            status_code=400,
+            code="invalid_scholar_image",
+            message=str(exc),
+        ) from exc
+
+    logger.info(
+        "api.scholars.image_url_updated",
+        extra={
+            "event": "api.scholars.image_url_updated",
+            "user_id": current_user.id,
+            "scholar_profile_id": updated.id,
+        },
+    )
+    return success_payload(
+        request,
+        data=_serialize_scholar(updated),
+    )
+
+
+@router.post(
+    "/{scholar_profile_id}/image/upload",
+    response_model=ScholarEnvelope,
+)
+async def upload_scholar_image(
+    scholar_profile_id: int,
+    request: Request,
+    image: UploadFile = File(...),
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    profile = await scholar_service.get_user_scholar_by_id(
+        db_session,
+        user_id=current_user.id,
+        scholar_profile_id=scholar_profile_id,
+    )
+    if profile is None:
+        raise ApiException(
+            status_code=404,
+            code="scholar_not_found",
+            message="Scholar not found.",
+        )
+
+    try:
+        image_bytes = await image.read()
+        updated = await scholar_service.set_profile_image_upload(
+            db_session,
+            profile=profile,
+            content_type=image.content_type,
+            image_bytes=image_bytes,
+            upload_dir=settings.scholar_image_upload_dir,
+            max_upload_bytes=settings.scholar_image_upload_max_bytes,
+        )
+    except scholar_service.ScholarServiceError as exc:
+        raise ApiException(
+            status_code=400,
+            code="invalid_scholar_image",
+            message=str(exc),
+        ) from exc
+    finally:
+        await image.close()
+
+    logger.info(
+        "api.scholars.image_uploaded",
+        extra={
+            "event": "api.scholars.image_uploaded",
+            "user_id": current_user.id,
+            "scholar_profile_id": updated.id,
+            "content_type": image.content_type,
+            "size_bytes": len(image_bytes),
+        },
+    )
+    return success_payload(
+        request,
+        data=_serialize_scholar(updated),
+    )
+
+
+@router.delete(
+    "/{scholar_profile_id}/image",
+    response_model=ScholarEnvelope,
+)
+async def clear_scholar_image_customization(
+    scholar_profile_id: int,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    profile = await scholar_service.get_user_scholar_by_id(
+        db_session,
+        user_id=current_user.id,
+        scholar_profile_id=scholar_profile_id,
+    )
+    if profile is None:
+        raise ApiException(
+            status_code=404,
+            code="scholar_not_found",
+            message="Scholar not found.",
+        )
+
+    updated = await scholar_service.clear_profile_image_customization(
+        db_session,
+        profile=profile,
+        upload_dir=settings.scholar_image_upload_dir,
+    )
+    logger.info(
+        "api.scholars.image_customization_cleared",
+        extra={
+            "event": "api.scholars.image_customization_cleared",
+            "user_id": current_user.id,
+            "scholar_profile_id": updated.id,
+        },
+    )
+    return success_payload(
+        request,
+        data=_serialize_scholar(updated),
+    )
+
+
+@router.get(
+    "/{scholar_profile_id}/image/upload",
+)
+async def get_uploaded_scholar_image(
+    scholar_profile_id: int,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    profile = await scholar_service.get_user_scholar_by_id(
+        db_session,
+        user_id=current_user.id,
+        scholar_profile_id=scholar_profile_id,
+    )
+    if profile is None:
+        raise ApiException(
+            status_code=404,
+            code="scholar_not_found",
+            message="Scholar not found.",
+        )
+    if not profile.profile_image_upload_path:
+        raise ApiException(
+            status_code=404,
+            code="scholar_image_not_found",
+            message="Scholar image not found.",
+        )
+
+    try:
+        image_path = scholar_service.resolve_upload_file_path(
+            upload_dir=settings.scholar_image_upload_dir,
+            relative_path=profile.profile_image_upload_path,
+        )
+    except scholar_service.ScholarServiceError as exc:
+        raise ApiException(
+            status_code=404,
+            code="scholar_image_not_found",
+            message="Scholar image not found.",
+        ) from exc
+
+    if not image_path.exists() or not image_path.is_file():
+        raise ApiException(
+            status_code=404,
+            code="scholar_image_not_found",
+            message="Scholar image not found.",
+        )
+
+    media_type = mimetypes.guess_type(str(image_path))[0] or "application/octet-stream"
+    return FileResponse(path=image_path, media_type=media_type)

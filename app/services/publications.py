@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, func, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -295,3 +295,39 @@ async def mark_all_unread_as_read_for_user(
 
     rowcount = result.rowcount
     return int(rowcount or 0)
+
+
+async def mark_selected_as_read_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    selections: list[tuple[int, int]],
+) -> int:
+    normalized_pairs = {
+        (int(scholar_profile_id), int(publication_id))
+        for scholar_profile_id, publication_id in selections
+        if int(scholar_profile_id) > 0 and int(publication_id) > 0
+    }
+    if not normalized_pairs:
+        return 0
+
+    scholar_ids = (
+        select(ScholarProfile.id)
+        .where(ScholarProfile.user_id == user_id)
+        .scalar_subquery()
+    )
+    stmt = (
+        update(ScholarPublication)
+        .where(
+            ScholarPublication.scholar_profile_id.in_(scholar_ids),
+            tuple_(
+                ScholarPublication.scholar_profile_id,
+                ScholarPublication.publication_id,
+            ).in_(list(normalized_pairs)),
+            ScholarPublication.is_read.is_(False),
+        )
+        .values(is_read=True)
+    )
+    result = await db_session.execute(stmt)
+    await db_session.commit()
+    return int(result.rowcount or 0)

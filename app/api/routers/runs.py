@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_api_current_user
@@ -24,7 +25,7 @@ from app.services import ingestion as ingestion_service
 from app.services import runs as run_service
 from app.services import user_settings as user_settings_service
 from app.settings import settings
-from app.web.deps import get_ingestion_service
+from app.api.runtime_deps import get_ingestion_service
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,7 @@ async def run_manual(
             page_size=settings.ingestion_page_size,
             auto_queue_continuations=settings.ingestion_continuation_queue_enabled,
             queue_delay_seconds=settings.ingestion_continuation_base_delay_seconds,
+            idempotency_key=idempotency_key,
         )
     except ingestion_service.RunAlreadyInProgressError as exc:
         await db_session.rollback()
@@ -387,6 +389,45 @@ async def run_manual(
             status_code=409,
             code="run_in_progress",
             message="A run is already in progress for this account.",
+        ) from exc
+    except IntegrityError as exc:
+        await db_session.rollback()
+        if idempotency_key is not None:
+            existing_run = await run_service.get_manual_run_by_idempotency_key(
+                db_session,
+                user_id=current_user.id,
+                idempotency_key=idempotency_key,
+            )
+            if existing_run is not None:
+                if existing_run.status == RunStatus.RUNNING:
+                    raise ApiException(
+                        status_code=409,
+                        code="run_in_progress",
+                        message="A run with this idempotency key is still in progress.",
+                        details={
+                            "run_id": int(existing_run.id),
+                            "idempotency_key": idempotency_key,
+                        },
+                    ) from exc
+                return success_payload(
+                    request,
+                    data=_manual_run_payload_from_run(
+                        existing_run,
+                        idempotency_key=idempotency_key,
+                        reused_existing_run=True,
+                    ),
+                )
+        logger.exception(
+            "api.runs.manual_integrity_error",
+            extra={
+                "event": "api.runs.manual_integrity_error",
+                "user_id": current_user.id,
+            },
+        )
+        raise ApiException(
+            status_code=500,
+            code="manual_run_failed",
+            message="Manual run failed.",
         ) from exc
     except Exception as exc:
         await db_session.rollback()
@@ -402,14 +443,6 @@ async def run_manual(
             code="manual_run_failed",
             message="Manual run failed.",
         ) from exc
-
-    if idempotency_key is not None:
-        await run_service.set_manual_run_idempotency_key(
-            db_session,
-            user_id=current_user.id,
-            run_id=run_summary.crawl_run_id,
-            idempotency_key=idempotency_key,
-        )
 
     return success_payload(
         request,
