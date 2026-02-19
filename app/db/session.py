@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 import logging
+import os
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -18,16 +19,50 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+def _normalized_pool_mode(raw_mode: str) -> str:
+    mode = (raw_mode or "").strip().lower()
+    if mode == "auto":
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return "null"
+        app_env = (os.getenv("APP_ENV") or "").strip().lower()
+        if app_env in {"test", "development", "dev", "local"}:
+            return "null"
+        return "queue"
+    if mode in {"null", "queue"}:
+        return mode
+    logger.warning(
+        "db.invalid_pool_mode_fallback",
+        extra={
+            "event": "db.invalid_pool_mode_fallback",
+            "database_pool_mode": raw_mode,
+            "fallback_mode": "queue",
+        },
+    )
+    return "queue"
+
+
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        # NullPool avoids cross-event-loop connection reuse in tests and dev tools.
-        _engine = create_async_engine(
-            settings.database_url,
-            pool_pre_ping=True,
-            poolclass=NullPool,
+        pool_mode = _normalized_pool_mode(settings.database_pool_mode)
+        engine_kwargs: dict[str, object] = {
+            "pool_pre_ping": True,
+        }
+        if pool_mode == "null":
+            engine_kwargs["poolclass"] = NullPool
+        else:
+            engine_kwargs["pool_size"] = max(1, int(settings.database_pool_size))
+            engine_kwargs["max_overflow"] = max(0, int(settings.database_pool_max_overflow))
+            engine_kwargs["pool_timeout"] = max(1, int(settings.database_pool_timeout_seconds))
+
+        _engine = create_async_engine(settings.database_url, **engine_kwargs)
+        logger.info(
+            "db.engine_initialized",
+            extra={
+                "event": "db.engine_initialized",
+                "pool_mode": pool_mode,
+            },
         )
-        logger.info("db.engine_initialized", extra={"event": "db.engine_initialized"})
     return _engine
 
 

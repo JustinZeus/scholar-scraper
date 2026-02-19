@@ -84,7 +84,7 @@ export const useUserSettingsStore = defineStore("userSettings", {
         : 1;
       this.networkFailureThreshold = Number.isFinite(settings.policy?.network_failure_threshold)
         ? Math.max(1, settings.policy.network_failure_threshold)
-        : 1;
+        : 2;
       this.cooldownBlockedSeconds = Number.isFinite(settings.policy?.cooldown_blocked_seconds)
         ? Math.max(60, settings.policy.cooldown_blocked_seconds)
         : 1800;

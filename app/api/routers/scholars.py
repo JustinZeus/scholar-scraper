@@ -149,12 +149,14 @@ async def search_scholars(
     request: Request,
     query: str = Query(..., min_length=2, max_length=120),
     limit: int = Query(10, ge=1, le=25),
+    db_session: AsyncSession = Depends(get_db_session),
     source: ScholarSource = Depends(get_scholar_source),
     current_user: User = Depends(get_api_current_user),
 ):
     try:
         parsed = await scholar_service.search_author_candidates(
             source=source,
+            db_session=db_session,
             query=query,
             limit=limit,
             network_error_retries=settings.ingestion_network_error_retries,

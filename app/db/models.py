@@ -319,3 +319,56 @@ class IngestionQueueItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class AuthorSearchRuntimeState(Base):
+    __tablename__ = "author_search_runtime_state"
+
+    state_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    last_live_request_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_blocked_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    cooldown_rejection_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    cooldown_alert_emitted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AuthorSearchCacheEntry(Base):
+    __tablename__ = "author_search_cache_entries"
+    __table_args__ = (
+        Index("ix_author_search_cache_expires_at", "expires_at"),
+        Index("ix_author_search_cache_cached_at", "cached_at"),
+    )
+
+    query_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    payload: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    cached_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

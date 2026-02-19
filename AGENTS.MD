@@ -31,7 +31,7 @@ This file is the consolidated source of truth for project scope, constraints, sc
   - CSRF required for unsafe methods via `X-CSRF-Token`.
 - Logging:
   - structured request logging with request IDs.
-  - redaction controls for sensitive fields.
+  - redaction controls for sensitive fields. 
 
 ## 4. Scraping Contract (Probe-Based)
 
