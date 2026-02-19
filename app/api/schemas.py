@@ -202,6 +202,7 @@ class RunListItemData(BaseModel):
 
 class RunsListData(BaseModel):
     runs: list[RunListItemData]
+    safety_state: ScrapeSafetyStateData
 
     model_config = ConfigDict(extra="forbid")
 
@@ -223,6 +224,30 @@ class RunSummaryData(BaseModel):
     retry_counts: dict[str, int] = Field(default_factory=dict)
     alert_thresholds: dict[str, int] = Field(default_factory=dict)
     alert_flags: dict[str, bool] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScrapeSafetyCountersData(BaseModel):
+    consecutive_blocked_runs: int = 0
+    consecutive_network_runs: int = 0
+    cooldown_entry_count: int = 0
+    blocked_start_count: int = 0
+    last_blocked_failure_count: int = 0
+    last_network_failure_count: int = 0
+    last_evaluated_run_id: int | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScrapeSafetyStateData(BaseModel):
+    cooldown_active: bool
+    cooldown_reason: str | None = None
+    cooldown_reason_label: str | None = None
+    cooldown_until: datetime | None = None
+    cooldown_remaining_seconds: int = 0
+    recommended_action: str | None = None
+    counters: ScrapeSafetyCountersData = Field(default_factory=ScrapeSafetyCountersData)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -293,6 +318,7 @@ class RunDetailData(BaseModel):
     run: RunListItemData
     summary: RunSummaryData
     scholar_results: list[RunScholarResultData]
+    safety_state: ScrapeSafetyStateData
 
     model_config = ConfigDict(extra="forbid")
 
@@ -314,6 +340,7 @@ class ManualRunData(BaseModel):
     new_publication_count: int
     reused_existing_run: bool
     idempotency_key: str | None = None
+    safety_state: ScrapeSafetyStateData
 
     model_config = ConfigDict(extra="forbid")
 
@@ -429,11 +456,26 @@ class AdminResetPasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SettingsPolicyData(BaseModel):
+    min_run_interval_minutes: int
+    min_request_delay_seconds: int
+    automation_allowed: bool
+    manual_run_allowed: bool
+    blocked_failure_threshold: int
+    network_failure_threshold: int
+    cooldown_blocked_seconds: int
+    cooldown_network_seconds: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SettingsData(BaseModel):
     auto_run_enabled: bool
     run_interval_minutes: int
     request_delay_seconds: int
     nav_visible_pages: list[str]
+    policy: SettingsPolicyData
+    safety_state: ScrapeSafetyStateData
 
     model_config = ConfigDict(extra="forbid")
 

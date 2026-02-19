@@ -22,6 +22,8 @@ from app.db.models import (
     ScholarPublication,
 )
 from app.services import continuation_queue as queue_service
+from app.services import run_safety as run_safety_service
+from app.services import user_settings as user_settings_service
 from app.services.scholar_parser import (
     ParseState,
     ParsedProfilePage,
@@ -29,6 +31,7 @@ from app.services.scholar_parser import (
     parse_profile_page,
 )
 from app.services.scholar_source import FetchResult, ScholarSource
+from app.settings import settings
 
 TITLE_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 WORD_RE = re.compile(r"[a-z0-9]+")
@@ -88,6 +91,20 @@ class RunAlreadyInProgressError(RuntimeError):
     """Raised when a run lock for a user is already held by another process."""
 
 
+class RunBlockedBySafetyPolicyError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        safety_state: dict[str, Any],
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.safety_state = safety_state
+
+
 def _int_or_default(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -134,6 +151,61 @@ class ScholarIngestionService:
         alert_network_failure_threshold: int = 2,
         alert_retry_scheduled_threshold: int = 3,
     ) -> RunExecutionSummary:
+        user_settings = await user_settings_service.get_or_create_settings(
+            db_session,
+            user_id=user_id,
+        )
+        now_utc = datetime.now(timezone.utc)
+        previous_safety_state = run_safety_service.get_safety_event_context(
+            user_settings,
+            now_utc=now_utc,
+        )
+        if run_safety_service.clear_expired_cooldown(
+            user_settings,
+            now_utc=now_utc,
+        ):
+            await db_session.commit()
+            await db_session.refresh(user_settings)
+            logger.info(
+                "ingestion.safety_cooldown_cleared",
+                extra={
+                    "event": "ingestion.safety_cooldown_cleared",
+                    "user_id": user_id,
+                    "reason": previous_safety_state.get("cooldown_reason"),
+                    "cooldown_until": previous_safety_state.get("cooldown_until"),
+                    "metric_name": "ingestion_safety_cooldown_cleared_total",
+                    "metric_value": 1,
+                },
+            )
+            now_utc = datetime.now(timezone.utc)
+        if run_safety_service.is_cooldown_active(user_settings, now_utc=now_utc):
+            safety_state = run_safety_service.register_cooldown_blocked_start(
+                user_settings,
+                now_utc=now_utc,
+            )
+            await db_session.commit()
+            logger.warning(
+                "ingestion.safety_policy_blocked_run_start",
+                extra={
+                    "event": "ingestion.safety_policy_blocked_run_start",
+                    "user_id": user_id,
+                    "trigger_type": trigger_type.value,
+                    "reason": safety_state.get("cooldown_reason"),
+                    "cooldown_until": safety_state.get("cooldown_until"),
+                    "cooldown_remaining_seconds": safety_state.get("cooldown_remaining_seconds"),
+                    "blocked_start_count": (
+                        (safety_state.get("counters") or {}).get("blocked_start_count")
+                    ),
+                    "metric_name": "ingestion_safety_run_start_blocked_total",
+                    "metric_value": 1,
+                },
+            )
+            raise RunBlockedBySafetyPolicyError(
+                code="scrape_cooldown_active",
+                message="Scrape safety cooldown is active; run start is temporarily blocked.",
+                safety_state=safety_state,
+            )
+
         lock_acquired = await self._try_acquire_user_lock(
             db_session,
             user_id=user_id,
@@ -505,6 +577,8 @@ class ScholarIngestionService:
                     "crawl_run_id": run.id,
                     "blocked_failure_count": blocked_failure_count,
                     "threshold": bounded_blocked_threshold,
+                    "metric_name": "ingestion_blocked_failure_threshold_exceeded_total",
+                    "metric_value": 1,
                 },
             )
         if alert_flags["network_failure_threshold_exceeded"]:
@@ -516,6 +590,8 @@ class ScholarIngestionService:
                     "crawl_run_id": run.id,
                     "network_failure_count": network_failure_count,
                     "threshold": bounded_network_threshold,
+                    "metric_name": "ingestion_network_failure_threshold_exceeded_total",
+                    "metric_value": 1,
                 },
             )
         if alert_flags["retry_scheduled_threshold_exceeded"]:
@@ -527,6 +603,56 @@ class ScholarIngestionService:
                     "crawl_run_id": run.id,
                     "retries_scheduled_count": retries_scheduled_count,
                     "threshold": bounded_retry_threshold,
+                    "metric_name": "ingestion_retry_scheduled_threshold_exceeded_total",
+                    "metric_value": 1,
+                },
+            )
+
+        pre_apply_safety_state = run_safety_service.get_safety_event_context(
+            user_settings,
+            now_utc=datetime.now(timezone.utc),
+        )
+        safety_state, cooldown_trigger_reason = run_safety_service.apply_run_safety_outcome(
+            user_settings,
+            run_id=int(run.id),
+            blocked_failure_count=blocked_failure_count,
+            network_failure_count=network_failure_count,
+            blocked_failure_threshold=bounded_blocked_threshold,
+            network_failure_threshold=bounded_network_threshold,
+            blocked_cooldown_seconds=settings.ingestion_safety_cooldown_blocked_seconds,
+            network_cooldown_seconds=settings.ingestion_safety_cooldown_network_seconds,
+            now_utc=datetime.now(timezone.utc),
+        )
+        if cooldown_trigger_reason is not None:
+            logger.warning(
+                "ingestion.safety_cooldown_entered",
+                extra={
+                    "event": "ingestion.safety_cooldown_entered",
+                    "user_id": user_id,
+                    "crawl_run_id": run.id,
+                    "reason": cooldown_trigger_reason,
+                    "blocked_failure_count": blocked_failure_count,
+                    "network_failure_count": network_failure_count,
+                    "blocked_failure_threshold": bounded_blocked_threshold,
+                    "network_failure_threshold": bounded_network_threshold,
+                    "cooldown_until": safety_state.get("cooldown_until"),
+                    "cooldown_remaining_seconds": safety_state.get("cooldown_remaining_seconds"),
+                    "safety_counters": safety_state.get("counters", {}),
+                    "metric_name": "ingestion_safety_cooldown_entered_total",
+                    "metric_value": 1,
+                },
+            )
+        elif pre_apply_safety_state.get("cooldown_active") and not safety_state.get("cooldown_active"):
+            logger.info(
+                "ingestion.safety_cooldown_cleared",
+                extra={
+                    "event": "ingestion.safety_cooldown_cleared",
+                    "user_id": user_id,
+                    "crawl_run_id": run.id,
+                    "reason": pre_apply_safety_state.get("cooldown_reason"),
+                    "cooldown_until": pre_apply_safety_state.get("cooldown_until"),
+                    "metric_name": "ingestion_safety_cooldown_cleared_total",
+                    "metric_value": 1,
                 },
             )
 

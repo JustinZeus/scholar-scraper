@@ -14,7 +14,7 @@ EXPECTED_TABLES = {
 }
 
 EXPECTED_ENUMS = {"run_status", "run_trigger_type"}
-EXPECTED_REVISION = "20260219_0008"
+EXPECTED_REVISION = "20260219_0009"
 
 
 @pytest.mark.integration
@@ -199,3 +199,22 @@ async def test_user_settings_has_nav_visible_pages_column(db_session: AsyncSessi
         )
     )
     assert result.scalar_one() == 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.migrations
+@pytest.mark.asyncio
+async def test_user_settings_has_scrape_safety_columns(db_session: AsyncSession) -> None:
+    result = await db_session.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'user_settings'
+              AND column_name IN ('scrape_safety_state', 'scrape_cooldown_until', 'scrape_cooldown_reason')
+            """
+        )
+    )
+    columns = {row[0] for row in result}
+    assert columns == {"scrape_safety_state", "scrape_cooldown_until", "scrape_cooldown_reason"}

@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 
 import { fetchSettings, type UserSettings } from "@/features/settings";
+import { createDefaultSafetyState, normalizeSafetyState, type ScrapeSafetyState } from "@/features/safety";
 
 export const REQUIRED_NAV_PAGES = ["dashboard", "scholars", "settings"] as const;
 export const DEFAULT_NAV_VISIBLE_PAGES = [
@@ -51,6 +52,15 @@ function normalizeNavVisiblePages(value: unknown): string[] {
 export const useUserSettingsStore = defineStore("userSettings", {
   state: () => ({
     navVisiblePages: [...DEFAULT_NAV_VISIBLE_PAGES] as string[],
+    minRunIntervalMinutes: 15,
+    minRequestDelaySeconds: 2,
+    automationAllowed: true,
+    manualRunAllowed: true,
+    blockedFailureThreshold: 1,
+    networkFailureThreshold: 2,
+    cooldownBlockedSeconds: 1800,
+    cooldownNetworkSeconds: 900,
+    safetyState: createDefaultSafetyState() as ScrapeSafetyState,
   }),
   getters: {
     visiblePageSet: (state) => new Set(state.navVisiblePages),
@@ -61,9 +71,39 @@ export const useUserSettingsStore = defineStore("userSettings", {
     },
     applySettings(settings: UserSettings): void {
       this.setNavVisiblePages(settings.nav_visible_pages);
+      this.minRunIntervalMinutes = Number.isFinite(settings.policy?.min_run_interval_minutes)
+        ? Math.max(15, settings.policy.min_run_interval_minutes)
+        : 15;
+      this.minRequestDelaySeconds = Number.isFinite(settings.policy?.min_request_delay_seconds)
+        ? Math.max(2, settings.policy.min_request_delay_seconds)
+        : 2;
+      this.automationAllowed = Boolean(settings.policy?.automation_allowed ?? true);
+      this.manualRunAllowed = Boolean(settings.policy?.manual_run_allowed ?? true);
+      this.blockedFailureThreshold = Number.isFinite(settings.policy?.blocked_failure_threshold)
+        ? Math.max(1, settings.policy.blocked_failure_threshold)
+        : 1;
+      this.networkFailureThreshold = Number.isFinite(settings.policy?.network_failure_threshold)
+        ? Math.max(1, settings.policy.network_failure_threshold)
+        : 1;
+      this.cooldownBlockedSeconds = Number.isFinite(settings.policy?.cooldown_blocked_seconds)
+        ? Math.max(60, settings.policy.cooldown_blocked_seconds)
+        : 1800;
+      this.cooldownNetworkSeconds = Number.isFinite(settings.policy?.cooldown_network_seconds)
+        ? Math.max(60, settings.policy.cooldown_network_seconds)
+        : 900;
+      this.safetyState = normalizeSafetyState(settings.safety_state);
     },
     reset(): void {
       this.navVisiblePages = [...DEFAULT_NAV_VISIBLE_PAGES];
+      this.minRunIntervalMinutes = 15;
+      this.minRequestDelaySeconds = 2;
+      this.automationAllowed = true;
+      this.manualRunAllowed = true;
+      this.blockedFailureThreshold = 1;
+      this.networkFailureThreshold = 2;
+      this.cooldownBlockedSeconds = 1800;
+      this.cooldownNetworkSeconds = 900;
+      this.safetyState = createDefaultSafetyState();
     },
     isPageVisible(pageId: string): boolean {
       if (REQUIRED_NAV_PAGES_SET.has(pageId)) {

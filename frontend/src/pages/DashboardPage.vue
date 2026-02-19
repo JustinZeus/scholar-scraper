@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import { fetchDashboardSnapshot, type DashboardSnapshot } from "@/features/dashboard";
 import { ApiRequestError } from "@/lib/api/errors";
@@ -8,22 +8,51 @@ import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
 import QueueHealthBadge from "@/components/patterns/QueueHealthBadge.vue";
 import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import RunStatusBadge from "@/components/patterns/RunStatusBadge.vue";
+import ScrapeSafetyBanner from "@/components/patterns/ScrapeSafetyBanner.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import { useAuthStore } from "@/stores/auth";
 import { useRunStatusStore } from "@/stores/run_status";
+import { useUserSettingsStore } from "@/stores/user_settings";
 
 const loading = ref(true);
 const errorMessage = ref<string | null>(null);
 const errorRequestId = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const snapshot = ref<DashboardSnapshot | null>(null);
+const refreshingAfterCompletion = ref(false);
 const auth = useAuthStore();
 const runStatus = useRunStatusStore();
+const userSettings = useUserSettingsStore();
+
+const isStartBlocked = computed(
+  () =>
+    runStatus.isRunActive ||
+    !userSettings.manualRunAllowed ||
+    runStatus.safetyState.cooldown_active,
+);
+const startCheckDisabledReason = computed(() => {
+  if (!userSettings.manualRunAllowed) {
+    return "Manual checks are disabled by server policy.";
+  }
+  if (runStatus.safetyState.cooldown_active) {
+    return runStatus.safetyState.cooldown_reason_label || "Safety cooldown is active.";
+  }
+  if (runStatus.isRunActive) {
+    return "A check is already in progress.";
+  }
+  return null;
+});
 
 const startCheckLabel = computed(() => {
+  if (!userSettings.manualRunAllowed) {
+    return "Manual checks disabled";
+  }
+  if (runStatus.safetyState.cooldown_active) {
+    return "Safety cooldown";
+  }
   if (runStatus.isLikelyRunning) {
     return "Check in progress";
   }
@@ -32,6 +61,9 @@ const startCheckLabel = computed(() => {
   }
   return "Start check";
 });
+const isStartCheckAnimating = computed(
+  () => runStatus.isSubmitting || runStatus.isLikelyRunning,
+);
 
 const displayedLatestRun = computed(() => {
   const snapshotLatest = snapshot.value?.latestRun ?? null;
@@ -95,6 +127,7 @@ async function loadSnapshot(): Promise<void> {
     const dashboardSnapshot = await fetchDashboardSnapshot();
     snapshot.value = dashboardSnapshot;
     runStatus.setLatestRun(dashboardSnapshot.latestRun);
+    runStatus.setSafetyState(dashboardSnapshot.safetyState);
   } catch (error) {
     snapshot.value = null;
     if (error instanceof ApiRequestError) {
@@ -140,6 +173,29 @@ async function onTriggerRun(): Promise<void> {
 onMounted(() => {
   void loadSnapshot();
 });
+
+watch(
+  () => runStatus.latestRun,
+  (nextRun, previousRun) => {
+    if (refreshingAfterCompletion.value) {
+      return;
+    }
+    if (!nextRun || !previousRun) {
+      return;
+    }
+    if (nextRun.id !== previousRun.id) {
+      return;
+    }
+    if (previousRun.status !== "running" || nextRun.status === "running") {
+      return;
+    }
+
+    refreshingAfterCompletion.value = true;
+    void loadSnapshot().finally(() => {
+      refreshingAfterCompletion.value = false;
+    });
+  },
+);
 </script>
 
 <template>
@@ -155,6 +211,10 @@ onMounted(() => {
         :error-request-id="errorRequestId"
         error-title="Dashboard request failed"
         @dismiss-success="successMessage = null"
+      />
+      <ScrapeSafetyBanner
+        :safety-state="runStatus.safetyState"
+        :manual-run-allowed="userSettings.manualRunAllowed"
       />
 
       <div class="h-0 min-h-0 flex-1 xl:overflow-hidden">
@@ -254,10 +314,20 @@ onMounted(() => {
                     <div class="flex items-center gap-2">
                       <AppButton
                         v-if="auth.isAdmin"
-                        :disabled="runStatus.isRunActive"
+                        :disabled="isStartBlocked"
+                        :title="startCheckDisabledReason || undefined"
+                        :class="isStartCheckAnimating ? 'shadow-[0_0_0_1px_var(--color-state-info-border)]' : ''"
                         @click="onTriggerRun"
                       >
-                        {{ startCheckLabel }}
+                        <span class="inline-flex items-center gap-2">
+                          <span v-if="isStartCheckAnimating" class="relative inline-flex h-2.5 w-2.5">
+                            <span
+                              class="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60"
+                            />
+                            <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-current" />
+                          </span>
+                          {{ startCheckLabel }}
+                        </span>
                       </AppButton>
                       <RouterLink
                         v-if="auth.isAdmin"

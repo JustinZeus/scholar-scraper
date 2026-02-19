@@ -14,10 +14,12 @@ import {
   changePassword,
   fetchSettings,
   type UserSettings,
+  type UserSettingsUpdate,
   updateSettings,
 } from "@/features/settings";
 import { ApiRequestError } from "@/lib/api/errors";
 import { useAuthStore } from "@/stores/auth";
+import { useRunStatusStore } from "@/stores/run_status";
 import { normalizeUserNavVisiblePages, useUserSettingsStore } from "@/stores/user_settings";
 
 interface NavPageOption {
@@ -78,6 +80,7 @@ const NAV_PAGE_OPTIONS: NavPageOption[] = [
 
 const auth = useAuthStore();
 const userSettings = useUserSettingsStore();
+const runStatus = useRunStatusStore();
 
 const loading = ref(true);
 const saving = ref(false);
@@ -98,8 +101,14 @@ const successMessage = ref<string | null>(null);
 const showIngestionModal = ref(false);
 const showPasswordModal = ref(false);
 const showNavigationModal = ref(false);
-const MIN_CHECK_INTERVAL_MINUTES = 15;
-const MIN_REQUEST_DELAY_SECONDS = 2;
+const minCheckIntervalMinutes = ref(15);
+const minRequestDelaySeconds = ref(2);
+const automationAllowed = ref(true);
+const manualRunAllowed = ref(true);
+const blockedFailureThreshold = ref(1);
+const networkFailureThreshold = ref(2);
+const cooldownBlockedSeconds = ref(1800);
+const cooldownNetworkSeconds = ref(900);
 
 const visibleNavOptions = computed(() =>
   NAV_PAGE_OPTIONS.filter((option) => !option.adminOnly || auth.isAdmin),
@@ -111,11 +120,35 @@ const visibleNavLabels = computed(() =>
 );
 
 function hydrateSettings(settings: UserSettings): void {
-  autoRunEnabled.value = settings.auto_run_enabled;
+  const parsedMinRunInterval = Number(settings.policy?.min_run_interval_minutes);
+  minCheckIntervalMinutes.value = Number.isFinite(parsedMinRunInterval)
+    ? Math.max(15, parsedMinRunInterval)
+    : 15;
+  const parsedMinRequestDelay = Number(settings.policy?.min_request_delay_seconds);
+  minRequestDelaySeconds.value = Number.isFinite(parsedMinRequestDelay)
+    ? Math.max(2, parsedMinRequestDelay)
+    : 2;
+  automationAllowed.value = Boolean(settings.policy?.automation_allowed ?? true);
+  manualRunAllowed.value = Boolean(settings.policy?.manual_run_allowed ?? true);
+  blockedFailureThreshold.value = Number.isFinite(settings.policy?.blocked_failure_threshold)
+    ? Math.max(1, settings.policy.blocked_failure_threshold)
+    : 1;
+  networkFailureThreshold.value = Number.isFinite(settings.policy?.network_failure_threshold)
+    ? Math.max(1, settings.policy.network_failure_threshold)
+    : 2;
+  cooldownBlockedSeconds.value = Number.isFinite(settings.policy?.cooldown_blocked_seconds)
+    ? Math.max(60, settings.policy.cooldown_blocked_seconds)
+    : 1800;
+  cooldownNetworkSeconds.value = Number.isFinite(settings.policy?.cooldown_network_seconds)
+    ? Math.max(60, settings.policy.cooldown_network_seconds)
+    : 900;
+
+  autoRunEnabled.value = Boolean(settings.auto_run_enabled) && automationAllowed.value;
   runIntervalMinutes.value = String(settings.run_interval_minutes);
   requestDelaySeconds.value = String(settings.request_delay_seconds);
   navVisiblePages.value = normalizeUserNavVisiblePages(settings.nav_visible_pages);
   userSettings.applySettings(settings);
+  runStatus.setSafetyState(settings.safety_state);
 }
 
 function parseBoundedInteger(value: string, label: string, minimum: number): number {
@@ -176,17 +209,17 @@ async function onSaveSettings(): Promise<void> {
   successMessage.value = null;
 
   try {
-    const payload: UserSettings = {
+    const payload: UserSettingsUpdate = {
       auto_run_enabled: autoRunEnabled.value,
       run_interval_minutes: parseBoundedInteger(
         runIntervalMinutes.value,
         "Check interval (minutes)",
-        MIN_CHECK_INTERVAL_MINUTES,
+        minCheckIntervalMinutes.value,
       ),
       request_delay_seconds: parseBoundedInteger(
         requestDelaySeconds.value,
         "Delay between requests (seconds)",
-        MIN_REQUEST_DELAY_SECONDS,
+        minRequestDelaySeconds.value,
       ),
       nav_visible_pages: normalizeUserNavVisiblePages(navVisiblePages.value),
     };
@@ -268,29 +301,13 @@ onMounted(() => {
     <AsyncStateGate :loading="loading" :loading-lines="7" :show-empty="false">
       <section class="grid gap-4 xl:grid-cols-3">
         <AppCard class="flex h-full flex-col gap-4">
-          <div class="flex items-center gap-1">
-            <h2 class="text-lg font-semibold text-ink-primary">Automatic Checking</h2>
-            <AppHelpHint text="Controls when Scholarr runs automatic profile checks and how cautiously it scrapes." />
-          </div>
+        <div class="flex items-center gap-1">
+          <h2 class="text-lg font-semibold text-ink-primary">Automatic Checking</h2>
+          <AppHelpHint text="Controls when Scholarr runs automatic profile checks and how cautiously it scrapes." />
+        </div>
           <p class="text-sm text-secondary">
             Configure the background checker that looks for new publications on your tracked profiles.
           </p>
-          <dl class="grid gap-2 text-sm text-secondary">
-            <div class="flex items-center justify-between gap-2">
-              <dt>Automatic checks</dt>
-              <dd class="font-semibold text-ink-primary">
-                {{ autoRunEnabled ? "Enabled" : "Disabled" }}
-              </dd>
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <dt>Check interval</dt>
-              <dd class="font-semibold text-ink-primary">Every {{ runIntervalMinutes }} min</dd>
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <dt>Delay between requests</dt>
-              <dd class="font-semibold text-ink-primary">{{ requestDelaySeconds }} sec</dd>
-            </div>
-          </dl>
           <AppButton variant="secondary" class="mt-auto self-start" @click="showIngestionModal = true">
             Edit checking rules
           </AppButton>
@@ -330,15 +347,23 @@ onMounted(() => {
       @close="showIngestionModal = false"
     >
       <form class="grid gap-3" @submit.prevent="onSaveSettings">
-        <AppCheckbox id="auto-run-enabled" v-model="autoRunEnabled" label="Enable automatic background checks" />
+        <AppCheckbox
+          id="auto-run-enabled"
+          v-model="autoRunEnabled"
+          :disabled="!automationAllowed"
+          label="Enable automatic background checks"
+        />
+        <p v-if="!automationAllowed" class="text-xs text-secondary">
+          Automatic checks are disabled by server safety policy.
+        </p>
 
         <label class="grid gap-2 text-sm font-medium text-ink-secondary">
           <span class="inline-flex items-center gap-1">
             Check interval (minutes)
             <AppHelpHint text="How often Scholarr starts a background update check." />
           </span>
-          <AppInput id="run-interval" v-model="runIntervalMinutes" type="number" :min="MIN_CHECK_INTERVAL_MINUTES" />
-          <span class="text-xs text-secondary">Minimum: {{ MIN_CHECK_INTERVAL_MINUTES }} minutes.</span>
+          <AppInput id="run-interval" v-model="runIntervalMinutes" type="number" :min="minCheckIntervalMinutes" />
+          <span class="text-xs text-secondary">Minimum: {{ minCheckIntervalMinutes }} minutes.</span>
         </label>
 
         <label class="grid gap-2 text-sm font-medium text-ink-secondary">
@@ -350,10 +375,17 @@ onMounted(() => {
             id="request-delay"
             v-model="requestDelaySeconds"
             type="number"
-            :min="MIN_REQUEST_DELAY_SECONDS"
+            :min="minRequestDelaySeconds"
           />
-          <span class="text-xs text-secondary">Minimum: {{ MIN_REQUEST_DELAY_SECONDS }} seconds.</span>
+          <span class="text-xs text-secondary">Minimum: {{ minRequestDelaySeconds }} seconds.</span>
         </label>
+
+        <div class="grid gap-1 rounded-lg border border-stroke-default bg-surface-card-muted px-3 py-2 text-xs text-secondary">
+          <p class="font-medium text-ink-primary">Server-enforced scrape safety policy</p>
+          <p>Blocked failures trigger cooldown at {{ blockedFailureThreshold }} failures.</p>
+          <p>Network failures trigger cooldown at {{ networkFailureThreshold }} failures.</p>
+          <p>Blocked cooldown: {{ cooldownBlockedSeconds }}s. Network cooldown: {{ cooldownNetworkSeconds }}s.</p>
+        </div>
 
         <div class="mt-2 flex flex-wrap justify-end gap-2">
           <AppButton

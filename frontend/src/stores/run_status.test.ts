@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
 import { ApiRequestError } from "@/lib/api/errors";
+import { createDefaultSafetyState } from "@/features/safety";
 
 vi.mock("@/features/runs", () => ({
   listRuns: vi.fn(),
@@ -40,6 +41,13 @@ function buildRun(overrides: Partial<{
   };
 }
 
+function buildRunsPayload(runs: ReturnType<typeof buildRun>[]) {
+  return {
+    runs,
+    safety_state: createDefaultSafetyState(),
+  };
+}
+
 describe("run status store", () => {
   const mockedListRuns = vi.mocked(listRuns);
   const mockedTriggerManualRun = vi.mocked(triggerManualRun);
@@ -57,7 +65,7 @@ describe("run status store", () => {
   });
 
   it("bootstraps from latest run and exposes idle start state", async () => {
-    mockedListRuns.mockResolvedValueOnce([buildRun({ id: 11, status: "success" })]);
+    mockedListRuns.mockResolvedValueOnce(buildRunsPayload([buildRun({ id: 11, status: "success" })]));
 
     const store = useRunStatusStore();
     await store.bootstrap();
@@ -80,8 +88,11 @@ describe("run status store", () => {
       new_publication_count: 0,
       reused_existing_run: false,
       idempotency_key: "abc",
+      safety_state: createDefaultSafetyState(),
     });
-    mockedListRuns.mockResolvedValueOnce([buildRun({ id: 25, status: "running", end_dt: null })]);
+    mockedListRuns.mockResolvedValueOnce(
+      buildRunsPayload([buildRun({ id: 25, status: "running", end_dt: null })]),
+    );
 
     const store = useRunStatusStore();
     const result = await store.startManualCheck();
@@ -106,7 +117,9 @@ describe("run status store", () => {
         requestId: "req_123",
       }),
     );
-    mockedListRuns.mockResolvedValueOnce([buildRun({ id: 42, status: "running", end_dt: null })]);
+    mockedListRuns.mockResolvedValueOnce(
+      buildRunsPayload([buildRun({ id: 42, status: "running", end_dt: null })]),
+    );
 
     const store = useRunStatusStore();
     const result = await store.startManualCheck();
@@ -124,8 +137,8 @@ describe("run status store", () => {
   it("polls while a run is active and stops when it completes", async () => {
     vi.useFakeTimers();
     mockedListRuns
-      .mockResolvedValueOnce([buildRun({ id: 90, status: "running", end_dt: null })])
-      .mockResolvedValueOnce([buildRun({ id: 90, status: "success" })]);
+      .mockResolvedValueOnce(buildRunsPayload([buildRun({ id: 90, status: "running", end_dt: null })]))
+      .mockResolvedValueOnce(buildRunsPayload([buildRun({ id: 90, status: "success" })]));
 
     const store = useRunStatusStore();
     await store.syncLatest();
@@ -137,6 +150,42 @@ describe("run status store", () => {
     expect(store.latestRun?.status).toBe("success");
     expect(store.isPolling).toBe(false);
     expect(store.isRunActive).toBe(false);
+  });
+
+  it("stores cooldown safety state when manual start is blocked by policy cooldown", async () => {
+    mockedTriggerManualRun.mockRejectedValueOnce(
+      new ApiRequestError({
+        status: 429,
+        code: "scrape_cooldown_active",
+        message: "Scrape safety cooldown is active; run start is temporarily blocked.",
+        details: {
+          safety_state: {
+            cooldown_active: true,
+            cooldown_reason: "blocked_failure_threshold_exceeded",
+            cooldown_reason_label: "Blocked responses exceeded safety threshold",
+            cooldown_until: "2026-02-19T12:30:00Z",
+            cooldown_remaining_seconds: 600,
+            recommended_action: "Wait for cooldown to expire.",
+            counters: {
+              consecutive_blocked_runs: 1,
+              consecutive_network_runs: 0,
+              cooldown_entry_count: 1,
+              blocked_start_count: 2,
+              last_blocked_failure_count: 1,
+              last_network_failure_count: 0,
+              last_evaluated_run_id: 10,
+            },
+          },
+        },
+      }),
+    );
+
+    const store = useRunStatusStore();
+    const result = await store.startManualCheck();
+
+    expect(result.kind).toBe("error");
+    expect(store.safetyState.cooldown_active).toBe(true);
+    expect(store.canStart).toBe(false);
   });
 
   it("switches from starting to in-progress when trigger request remains open", async () => {
@@ -155,11 +204,12 @@ describe("run status store", () => {
               new_publication_count: 0,
               reused_existing_run: false,
               idempotency_key: "x",
+              safety_state: createDefaultSafetyState(),
             });
           }, RUN_STATUS_STARTING_PHASE_MS + 500);
         }),
     );
-    mockedListRuns.mockResolvedValueOnce([]);
+    mockedListRuns.mockResolvedValueOnce(buildRunsPayload([]));
 
     const store = useRunStatusStore();
     const startPromise = store.startManualCheck();

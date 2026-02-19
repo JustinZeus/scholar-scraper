@@ -33,25 +33,49 @@ REQUIRED_NAV_PAGES = (
     NAV_PAGE_SETTINGS,
 )
 DEFAULT_NAV_VISIBLE_PAGES = list(ALLOWED_NAV_PAGES)
+HARD_MIN_RUN_INTERVAL_MINUTES = 15
+HARD_MIN_REQUEST_DELAY_SECONDS = 2
 
 
-def parse_run_interval_minutes(value: str) -> int:
+def resolve_run_interval_minimum(configured_minimum: int | None) -> int:
+    try:
+        parsed = int(configured_minimum) if configured_minimum is not None else HARD_MIN_RUN_INTERVAL_MINUTES
+    except (TypeError, ValueError):
+        parsed = HARD_MIN_RUN_INTERVAL_MINUTES
+    return max(HARD_MIN_RUN_INTERVAL_MINUTES, parsed)
+
+
+def resolve_request_delay_minimum(configured_minimum: int | None) -> int:
+    try:
+        parsed = int(configured_minimum) if configured_minimum is not None else HARD_MIN_REQUEST_DELAY_SECONDS
+    except (TypeError, ValueError):
+        parsed = HARD_MIN_REQUEST_DELAY_SECONDS
+    return max(HARD_MIN_REQUEST_DELAY_SECONDS, parsed)
+
+
+def parse_run_interval_minutes(value: str, *, minimum: int = HARD_MIN_RUN_INTERVAL_MINUTES) -> int:
     try:
         parsed = int(value)
     except ValueError as exc:
         raise UserSettingsServiceError("Check interval must be a whole number.") from exc
-    if parsed < 15:
-        raise UserSettingsServiceError("Check interval must be at least 15 minutes.")
+    effective_minimum = resolve_run_interval_minimum(minimum)
+    if parsed < effective_minimum:
+        raise UserSettingsServiceError(
+            f"Check interval must be at least {effective_minimum} minutes."
+        )
     return parsed
 
 
-def parse_request_delay_seconds(value: str) -> int:
+def parse_request_delay_seconds(value: str, *, minimum: int = HARD_MIN_REQUEST_DELAY_SECONDS) -> int:
     try:
         parsed = int(value)
     except ValueError as exc:
         raise UserSettingsServiceError("Request delay must be a whole number.") from exc
-    if parsed < 2:
-        raise UserSettingsServiceError("Request delay must be at least 2 seconds.")
+    effective_minimum = resolve_request_delay_minimum(minimum)
+    if parsed < effective_minimum:
+        raise UserSettingsServiceError(
+            f"Request delay must be at least {effective_minimum} seconds."
+        )
     return parsed
 
 

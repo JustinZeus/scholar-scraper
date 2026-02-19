@@ -105,6 +105,13 @@ class UserSetting(Base):
             '\'["dashboard","scholars","publications","settings","style-guide","runs","users"]\'::jsonb'
         ),
     )
+    scrape_safety_state: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    scrape_cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scrape_cooldown_reason: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

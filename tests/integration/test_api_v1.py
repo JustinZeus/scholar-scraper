@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.runtime_deps import get_scholar_source
 from app.main import app
+from app.services import user_settings as user_settings_service
 from app.services.scholar_source import FetchResult
 from app.settings import settings
 from tests.integration.helpers import insert_user, login_user
+
+REGRESSION_FIXTURE_DIR = Path("tests/fixtures/scholar/regression")
+SAFETY_STATE_KEYS = {
+    "cooldown_active",
+    "cooldown_reason",
+    "cooldown_reason_label",
+    "cooldown_until",
+    "cooldown_remaining_seconds",
+    "recommended_action",
+    "counters",
+}
+SAFETY_COUNTER_KEYS = {
+    "consecutive_blocked_runs",
+    "consecutive_network_runs",
+    "cooldown_entry_count",
+    "blocked_start_count",
+    "last_blocked_failure_count",
+    "last_network_failure_count",
+    "last_evaluated_run_id",
+}
 
 
 def _api_bootstrap_csrf_headers(client: TestClient) -> dict[str, str]:
@@ -30,6 +52,17 @@ def _api_csrf_headers(client: TestClient) -> dict[str, str]:
     token = body["data"]["csrf_token"]
     assert isinstance(token, str) and token
     return {"X-CSRF-Token": token}
+
+
+def _regression_fixture(name: str) -> str:
+    return (REGRESSION_FIXTURE_DIR / name).read_text(encoding="utf-8")
+
+
+def _assert_safety_state_contract(payload: dict[str, object]) -> None:
+    assert set(payload.keys()) == SAFETY_STATE_KEYS
+    counters = payload["counters"]
+    assert isinstance(counters, dict)
+    assert set(counters.keys()) == SAFETY_COUNTER_KEYS
 
 
 @pytest.mark.integration
@@ -592,8 +625,35 @@ async def test_api_settings_get_and_update(db_session: AsyncSession) -> None:
 
     get_response = client.get("/api/v1/settings")
     assert get_response.status_code == 200
-    assert "request_delay_seconds" in get_response.json()["data"]
-    assert "nav_visible_pages" in get_response.json()["data"]
+    settings_payload = get_response.json()["data"]
+    assert "request_delay_seconds" in settings_payload
+    assert "nav_visible_pages" in settings_payload
+    assert settings_payload["policy"]["min_run_interval_minutes"] == user_settings_service.resolve_run_interval_minimum(
+        settings.ingestion_min_run_interval_minutes
+    )
+    assert settings_payload["policy"]["min_request_delay_seconds"] == user_settings_service.resolve_request_delay_minimum(
+        settings.ingestion_min_request_delay_seconds
+    )
+    assert settings_payload["policy"]["automation_allowed"] is settings.ingestion_automation_allowed
+    assert settings_payload["policy"]["manual_run_allowed"] is settings.ingestion_manual_run_allowed
+    assert settings_payload["policy"]["blocked_failure_threshold"] == max(
+        1,
+        int(settings.ingestion_alert_blocked_failure_threshold),
+    )
+    assert settings_payload["policy"]["network_failure_threshold"] == max(
+        1,
+        int(settings.ingestion_alert_network_failure_threshold),
+    )
+    assert settings_payload["policy"]["cooldown_blocked_seconds"] == max(
+        60,
+        int(settings.ingestion_safety_cooldown_blocked_seconds),
+    )
+    assert settings_payload["policy"]["cooldown_network_seconds"] == max(
+        60,
+        int(settings.ingestion_safety_cooldown_network_seconds),
+    )
+    _assert_safety_state_contract(settings_payload["safety_state"])
+    assert settings_payload["safety_state"]["cooldown_active"] is False
 
     update_response = client.put(
         "/api/v1/settings",
@@ -617,6 +677,59 @@ async def test_api_settings_get_and_update(db_session: AsyncSession) -> None:
         "settings",
         "runs",
     ]
+    assert "policy" in updated
+    _assert_safety_state_contract(updated["safety_state"])
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_settings_enforce_env_minimums(db_session: AsyncSession) -> None:
+    await insert_user(
+        db_session,
+        email="api-settings-policy@example.com",
+        password="api-password",
+    )
+
+    client = TestClient(app)
+    login_user(client, email="api-settings-policy@example.com", password="api-password")
+    headers = _api_csrf_headers(client)
+
+    previous_min_interval = settings.ingestion_min_run_interval_minutes
+    previous_min_delay = settings.ingestion_min_request_delay_seconds
+    object.__setattr__(settings, "ingestion_min_run_interval_minutes", 30)
+    object.__setattr__(settings, "ingestion_min_request_delay_seconds", 8)
+    try:
+        interval_response = client.put(
+            "/api/v1/settings",
+            json={
+                "auto_run_enabled": True,
+                "run_interval_minutes": 29,
+                "request_delay_seconds": 9,
+                "nav_visible_pages": ["dashboard", "scholars", "settings"],
+            },
+            headers=headers,
+        )
+        assert interval_response.status_code == 400
+        assert interval_response.json()["error"]["code"] == "invalid_settings"
+        assert interval_response.json()["error"]["message"] == "Check interval must be at least 30 minutes."
+
+        delay_response = client.put(
+            "/api/v1/settings",
+            json={
+                "auto_run_enabled": True,
+                "run_interval_minutes": 30,
+                "request_delay_seconds": 7,
+                "nav_visible_pages": ["dashboard", "scholars", "settings"],
+            },
+            headers=headers,
+        )
+        assert delay_response.status_code == 400
+        assert delay_response.json()["error"]["code"] == "invalid_settings"
+        assert delay_response.json()["error"]["message"] == "Request delay must be at least 8 seconds."
+    finally:
+        object.__setattr__(settings, "ingestion_min_run_interval_minutes", previous_min_interval)
+        object.__setattr__(settings, "ingestion_min_request_delay_seconds", previous_min_delay)
 
 
 @pytest.mark.integration
@@ -643,6 +756,7 @@ async def test_api_runs_manual_and_queue_actions(db_session: AsyncSession) -> No
     assert run_payload["status"] in {"success", "partial_failure", "failed"}
     assert run_payload["reused_existing_run"] is False
     assert run_payload["idempotency_key"] == "manual-run-0001"
+    _assert_safety_state_contract(run_payload["safety_state"])
     run_id = int(run_payload["run_id"])
 
     stored_key = await db_session.execute(
@@ -659,16 +773,19 @@ async def test_api_runs_manual_and_queue_actions(db_session: AsyncSession) -> No
     replay_payload = replay_response.json()["data"]
     assert replay_payload["run_id"] == run_payload["run_id"]
     assert replay_payload["reused_existing_run"] is True
+    _assert_safety_state_contract(replay_payload["safety_state"])
 
     runs_response = client.get("/api/v1/runs")
     assert runs_response.status_code == 200
     assert len(runs_response.json()["data"]["runs"]) >= 1
+    _assert_safety_state_contract(runs_response.json()["data"]["safety_state"])
 
     run_detail_response = client.get(f"/api/v1/runs/{run_id}")
     assert run_detail_response.status_code == 200
     detail_payload = run_detail_response.json()["data"]
     assert "summary" in detail_payload
     assert isinstance(detail_payload["scholar_results"], list)
+    _assert_safety_state_contract(detail_payload["safety_state"])
 
     scholar_result = await db_session.execute(
         text(
@@ -748,6 +865,278 @@ async def test_api_runs_manual_and_queue_actions(db_session: AsyncSession) -> No
     assert clear_response.status_code == 200
     assert clear_response.json()["data"]["status"] == "cleared"
     assert clear_response.json()["data"]["message"] == "Queue item cleared."
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_manual_run_can_be_disabled_by_policy(db_session: AsyncSession) -> None:
+    await insert_user(
+        db_session,
+        email="api-runs-policy@example.com",
+        password="api-password",
+    )
+    client = TestClient(app)
+    login_user(client, email="api-runs-policy@example.com", password="api-password")
+    headers = _api_csrf_headers(client)
+
+    previous_manual_allowed = settings.ingestion_manual_run_allowed
+    object.__setattr__(settings, "ingestion_manual_run_allowed", False)
+    try:
+        response = client.post("/api/v1/runs/manual", headers=headers)
+        assert response.status_code == 403
+        payload = response.json()
+        assert payload["error"]["code"] == "manual_runs_disabled"
+        assert payload["error"]["details"]["policy"]["manual_run_allowed"] is False
+        assert payload["error"]["details"]["safety_state"]["cooldown_active"] is False
+    finally:
+        object.__setattr__(settings, "ingestion_manual_run_allowed", previous_manual_allowed)
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_manual_run_enforces_scrape_safety_cooldown(db_session: AsyncSession) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-runs-safety@example.com",
+        password="api-password",
+    )
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "A1B2C3D4E5F6",
+            "display_name": "Safety Probe",
+        },
+    )
+    await db_session.commit()
+
+    blocked_fixture = _regression_fixture("profile_AAAAAAAAAAAA.html")
+
+    class BlockedScholarSource:
+        async def fetch_profile_page_html(
+            self,
+            scholar_id: str,
+            *,
+            cstart: int,
+            pagesize: int,
+        ) -> FetchResult:
+            _ = (scholar_id, cstart, pagesize)
+            return FetchResult(
+                requested_url="https://scholar.google.com/citations?hl=en&user=A1B2C3D4E5F6",
+                status_code=200,
+                final_url=(
+                    "https://accounts.google.com/v3/signin/identifier"
+                    "?continue=https%3A%2F%2Fscholar.google.com%2Fcitations"
+                ),
+                body=blocked_fixture,
+                error=None,
+            )
+
+        async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+            _ = scholar_id
+            return await self.fetch_profile_page_html(
+                "A1B2C3D4E5F6",
+                cstart=0,
+                pagesize=settings.ingestion_page_size,
+            )
+
+    app.dependency_overrides[get_scholar_source] = lambda: BlockedScholarSource()
+
+    previous_blocked_threshold = settings.ingestion_alert_blocked_failure_threshold
+    previous_blocked_cooldown_seconds = settings.ingestion_safety_cooldown_blocked_seconds
+    object.__setattr__(settings, "ingestion_alert_blocked_failure_threshold", 1)
+    object.__setattr__(settings, "ingestion_safety_cooldown_blocked_seconds", 600)
+
+    try:
+        client = TestClient(app)
+        login_user(client, email="api-runs-safety@example.com", password="api-password")
+        headers = _api_csrf_headers(client)
+
+        first_run_response = client.post(
+            "/api/v1/runs/manual",
+            headers={**headers, "Idempotency-Key": "safety-cooldown-run-1"},
+        )
+        assert first_run_response.status_code == 200
+
+        settings_response = client.get("/api/v1/settings")
+        assert settings_response.status_code == 200
+        safety_state = settings_response.json()["data"]["safety_state"]
+        _assert_safety_state_contract(safety_state)
+        assert safety_state["cooldown_active"] is True
+        assert safety_state["cooldown_reason"] == "blocked_failure_threshold_exceeded"
+        assert int(safety_state["cooldown_remaining_seconds"]) > 0
+        assert int(safety_state["counters"]["cooldown_entry_count"]) >= 1
+        assert int(safety_state["counters"]["last_blocked_failure_count"]) >= 1
+
+        blocked_start_response = client.post(
+            "/api/v1/runs/manual",
+            headers={**headers, "Idempotency-Key": "safety-cooldown-run-2"},
+        )
+        assert blocked_start_response.status_code == 429
+        blocked_payload = blocked_start_response.json()
+        assert blocked_payload["error"]["code"] == "scrape_cooldown_active"
+        blocked_state = blocked_payload["error"]["details"]["safety_state"]
+        _assert_safety_state_contract(blocked_state)
+        assert blocked_state["cooldown_active"] is True
+        assert blocked_state["cooldown_reason"] == "blocked_failure_threshold_exceeded"
+        assert int(blocked_state["counters"]["blocked_start_count"]) >= 1
+
+        runs_response = client.get("/api/v1/runs")
+        assert runs_response.status_code == 200
+        _assert_safety_state_contract(runs_response.json()["data"]["safety_state"])
+        assert runs_response.json()["data"]["safety_state"]["cooldown_active"] is True
+    finally:
+        object.__setattr__(settings, "ingestion_alert_blocked_failure_threshold", previous_blocked_threshold)
+        object.__setattr__(settings, "ingestion_safety_cooldown_blocked_seconds", previous_blocked_cooldown_seconds)
+        app.dependency_overrides.pop(get_scholar_source, None)
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_manual_run_enforces_network_failure_safety_cooldown(
+    db_session: AsyncSession,
+) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-runs-safety-network@example.com",
+        password="api-password",
+    )
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "NNN111NNN111",
+            "display_name": "Network Safety Probe",
+        },
+    )
+    await db_session.commit()
+
+    class NetworkFailureScholarSource:
+        async def fetch_profile_page_html(
+            self,
+            scholar_id: str,
+            *,
+            cstart: int,
+            pagesize: int,
+        ) -> FetchResult:
+            _ = (scholar_id, cstart, pagesize)
+            return FetchResult(
+                requested_url="https://scholar.google.com/citations?hl=en&user=NNN111NNN111",
+                status_code=None,
+                final_url=None,
+                body="",
+                error="timed out",
+            )
+
+        async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+            _ = scholar_id
+            return await self.fetch_profile_page_html(
+                "NNN111NNN111",
+                cstart=0,
+                pagesize=settings.ingestion_page_size,
+            )
+
+    app.dependency_overrides[get_scholar_source] = lambda: NetworkFailureScholarSource()
+
+    previous_network_threshold = settings.ingestion_alert_network_failure_threshold
+    previous_network_cooldown_seconds = settings.ingestion_safety_cooldown_network_seconds
+    previous_network_retries = settings.ingestion_network_error_retries
+    previous_retry_backoff = settings.ingestion_retry_backoff_seconds
+    object.__setattr__(settings, "ingestion_alert_network_failure_threshold", 1)
+    object.__setattr__(settings, "ingestion_safety_cooldown_network_seconds", 600)
+    object.__setattr__(settings, "ingestion_network_error_retries", 0)
+    object.__setattr__(settings, "ingestion_retry_backoff_seconds", 0.0)
+
+    try:
+        client = TestClient(app)
+        login_user(client, email="api-runs-safety-network@example.com", password="api-password")
+        headers = _api_csrf_headers(client)
+
+        first_run_response = client.post(
+            "/api/v1/runs/manual",
+            headers={**headers, "Idempotency-Key": "safety-network-cooldown-run-1"},
+        )
+        assert first_run_response.status_code == 200
+
+        settings_response = client.get("/api/v1/settings")
+        assert settings_response.status_code == 200
+        safety_state = settings_response.json()["data"]["safety_state"]
+        _assert_safety_state_contract(safety_state)
+        assert safety_state["cooldown_active"] is True
+        assert safety_state["cooldown_reason"] == "network_failure_threshold_exceeded"
+        assert int(safety_state["cooldown_remaining_seconds"]) > 0
+        assert int(safety_state["counters"]["last_network_failure_count"]) >= 1
+
+        blocked_start_response = client.post(
+            "/api/v1/runs/manual",
+            headers={**headers, "Idempotency-Key": "safety-network-cooldown-run-2"},
+        )
+        assert blocked_start_response.status_code == 429
+        blocked_payload = blocked_start_response.json()
+        assert blocked_payload["error"]["code"] == "scrape_cooldown_active"
+        blocked_state = blocked_payload["error"]["details"]["safety_state"]
+        _assert_safety_state_contract(blocked_state)
+        assert blocked_state["cooldown_active"] is True
+        assert blocked_state["cooldown_reason"] == "network_failure_threshold_exceeded"
+        assert int(blocked_state["counters"]["blocked_start_count"]) >= 1
+    finally:
+        object.__setattr__(settings, "ingestion_alert_network_failure_threshold", previous_network_threshold)
+        object.__setattr__(settings, "ingestion_safety_cooldown_network_seconds", previous_network_cooldown_seconds)
+        object.__setattr__(settings, "ingestion_network_error_retries", previous_network_retries)
+        object.__setattr__(settings, "ingestion_retry_backoff_seconds", previous_retry_backoff)
+        app.dependency_overrides.pop(get_scholar_source, None)
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_settings_clears_expired_scrape_safety_cooldown(
+    db_session: AsyncSession,
+) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-settings-safety-expired@example.com",
+        password="api-password",
+    )
+    user_settings = await user_settings_service.get_or_create_settings(
+        db_session,
+        user_id=user_id,
+    )
+    user_settings.scrape_safety_state = {"blocked_start_count": 2}
+    user_settings.scrape_cooldown_reason = "blocked_failure_threshold_exceeded"
+    user_settings.scrape_cooldown_until = datetime.now(timezone.utc) - timedelta(seconds=15)
+    await db_session.commit()
+
+    client = TestClient(app)
+    login_user(client, email="api-settings-safety-expired@example.com", password="api-password")
+
+    settings_response = client.get("/api/v1/settings")
+    assert settings_response.status_code == 200
+    settings_safety_state = settings_response.json()["data"]["safety_state"]
+    _assert_safety_state_contract(settings_safety_state)
+    assert settings_safety_state["cooldown_active"] is False
+    assert settings_safety_state["cooldown_reason"] is None
+    assert int(settings_safety_state["counters"]["blocked_start_count"]) == 2
+
+    runs_response = client.get("/api/v1/runs")
+    assert runs_response.status_code == 200
+    runs_safety_state = runs_response.json()["data"]["safety_state"]
+    _assert_safety_state_contract(runs_safety_state)
+    assert runs_safety_state["cooldown_active"] is False
+    assert runs_safety_state["cooldown_reason"] is None
 
 
 @pytest.mark.integration
