@@ -14,8 +14,10 @@ from app.db.models import (
     ScholarPublication,
 )
 
-MODE_NEW = "new"
 MODE_ALL = "all"
+MODE_UNREAD = "unread"
+MODE_LATEST = "latest"
+MODE_NEW = "new"  # compatibility alias for MODE_LATEST
 
 
 @dataclass(frozen=True)
@@ -45,10 +47,16 @@ class UnreadPublicationItem:
     pub_url: str | None
 
 
+def resolve_publication_view_mode(value: str | None) -> str:
+    if value == MODE_UNREAD:
+        return MODE_UNREAD
+    if value in {MODE_LATEST, MODE_NEW}:
+        return MODE_LATEST
+    return MODE_ALL
+
+
 def resolve_mode(value: str | None) -> str:
-    if value == MODE_ALL:
-        return MODE_ALL
-    return MODE_NEW
+    return resolve_publication_view_mode(value)
 
 
 async def get_latest_completed_run_id_for_user(
@@ -99,8 +107,10 @@ def publications_query(
     )
     if scholar_profile_id is not None:
         stmt = stmt.where(ScholarProfile.id == scholar_profile_id)
-    if mode == MODE_NEW:
-        # "New" means discovered in the latest completed run.
+    if mode == MODE_UNREAD:
+        stmt = stmt.where(ScholarPublication.is_read.is_(False))
+    if mode == MODE_LATEST:
+        # "Latest" means discovered in the latest completed run.
         if latest_run_id is None:
             stmt = stmt.where(False)
         else:
@@ -116,7 +126,7 @@ async def list_for_user(
     scholar_profile_id: int | None = None,
     limit: int = 300,
 ) -> list[PublicationListItem]:
-    resolved_mode = resolve_mode(mode)
+    resolved_mode = resolve_publication_view_mode(mode)
     latest_run_id = await get_latest_completed_run_id_for_user(
         db_session,
         user_id=user_id,
@@ -177,11 +187,11 @@ async def list_unread_for_user(
     result = await db_session.execute(
         publications_query(
             user_id=user_id,
-            mode=MODE_ALL,
+            mode=MODE_UNREAD,
             latest_run_id=None,
             scholar_profile_id=None,
             limit=limit,
-        ).where(ScholarPublication.is_read.is_(False))
+        )
     )
     rows = result.all()
     items: list[UnreadPublicationItem] = []
@@ -224,7 +234,7 @@ async def list_new_for_latest_run_for_user(
     rows = await list_for_user(
         db_session,
         user_id=user_id,
-        mode=MODE_NEW,
+        mode=MODE_LATEST,
         scholar_profile_id=None,
         limit=limit,
     )
@@ -250,7 +260,7 @@ async def count_for_user(
     mode: str = MODE_ALL,
     scholar_profile_id: int | None = None,
 ) -> int:
-    resolved_mode = resolve_mode(mode)
+    resolved_mode = resolve_publication_view_mode(mode)
     latest_run_id = await get_latest_completed_run_id_for_user(
         db_session,
         user_id=user_id,
@@ -263,12 +273,42 @@ async def count_for_user(
     )
     if scholar_profile_id is not None:
         stmt = stmt.where(ScholarProfile.id == scholar_profile_id)
-    if resolved_mode == MODE_NEW:
+    if resolved_mode == MODE_UNREAD:
+        stmt = stmt.where(ScholarPublication.is_read.is_(False))
+    if resolved_mode == MODE_LATEST:
         if latest_run_id is None:
             return 0
         stmt = stmt.where(ScholarPublication.first_seen_run_id == latest_run_id)
     result = await db_session.execute(stmt)
     return int(result.scalar_one() or 0)
+
+
+async def count_unread_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_profile_id: int | None = None,
+) -> int:
+    return await count_for_user(
+        db_session,
+        user_id=user_id,
+        mode=MODE_UNREAD,
+        scholar_profile_id=scholar_profile_id,
+    )
+
+
+async def count_latest_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_profile_id: int | None = None,
+) -> int:
+    return await count_for_user(
+        db_session,
+        user_id=user_id,
+        mode=MODE_LATEST,
+        scholar_profile_id=scholar_profile_id,
+    )
 
 
 async def mark_all_unread_as_read_for_user(

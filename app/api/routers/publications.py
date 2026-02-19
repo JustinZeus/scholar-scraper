@@ -31,13 +31,13 @@ router = APIRouter(prefix="/publications", tags=["api-publications"])
 )
 async def list_publications(
     request: Request,
-    mode: Literal["all", "new"] | None = Query(default=None),
+    mode: Literal["all", "unread", "latest", "new"] | None = Query(default=None),
     scholar_profile_id: int | None = Query(default=None, ge=1),
     limit: int = Query(default=300, ge=1, le=1000),
     db_session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_api_current_user),
 ):
-    resolved_mode = publication_service.resolve_mode(mode)
+    resolved_mode = publication_service.resolve_publication_view_mode(mode)
     selected_scholar_id = scholar_profile_id
     if selected_scholar_id is not None:
         selected_profile = await scholar_service.get_user_scholar_by_id(
@@ -59,10 +59,14 @@ async def list_publications(
         scholar_profile_id=selected_scholar_id,
         limit=limit,
     )
-    new_count = await publication_service.count_for_user(
+    unread_count = await publication_service.count_unread_for_user(
         db_session,
         user_id=current_user.id,
-        mode=publication_service.MODE_NEW,
+        scholar_profile_id=selected_scholar_id,
+    )
+    latest_count = await publication_service.count_latest_for_user(
+        db_session,
+        user_id=current_user.id,
         scholar_profile_id=selected_scholar_id,
     )
     total_count = await publication_service.count_for_user(
@@ -76,7 +80,9 @@ async def list_publications(
         data={
             "mode": resolved_mode,
             "selected_scholar_profile_id": selected_scholar_id,
-            "new_count": new_count,
+            "unread_count": unread_count,
+            "latest_count": latest_count,
+            "new_count": latest_count,
             "total_count": total_count,
             "publications": [
                 {

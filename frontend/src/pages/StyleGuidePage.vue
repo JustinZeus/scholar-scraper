@@ -277,7 +277,7 @@ function onToggleTheme(): void {
           <div class="flex flex-wrap gap-2">
             <AppButton>Primary action</AppButton>
             <AppButton variant="secondary">Secondary</AppButton>
-            <AppBadge tone="warning">Needs review</AppBadge>
+            <AppBadge tone="warning">Unread</AppBadge>
           </div>
           <AppTable label="Shell preview table">
             <thead>

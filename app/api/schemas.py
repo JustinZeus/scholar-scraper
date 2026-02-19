@@ -515,6 +515,8 @@ class PublicationItemData(BaseModel):
 class PublicationsListData(BaseModel):
     mode: str
     selected_scholar_profile_id: int | None
+    unread_count: int
+    latest_count: int
     new_count: int
     total_count: int
     publications: list[PublicationItemData]

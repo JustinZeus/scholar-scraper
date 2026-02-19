@@ -266,3 +266,13 @@ Scheduled fixture probes run in GitHub Actions via `.github/workflows/scheduled-
 - Base path: `/api/v1`
 - Success envelope: `{"data": ..., "meta": {"request_id": "..."}}`
 - Error envelope: `{"error": {"code": "...", "message": "...", "details": ...}, "meta": {"request_id": "..."}}`
+
+### Publications semantics
+
+- `GET /api/v1/publications` supports `mode=all|unread|latest` (plus temporary alias `mode=new`).
+- `unread` = actionable read-state (`is_read=false`).
+- `latest` = discovery-state (`first seen in the latest completed check`).
+- Response counters:
+  - `unread_count`: unread publications in current scope.
+  - `latest_count`: publications discovered in latest completed check.
+  - `new_count`: compatibility alias for `latest_count` (temporary).

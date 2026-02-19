@@ -41,7 +41,7 @@ function countQueueStatuses(statuses: string[]): QueueHealth {
 
 export async function fetchDashboardSnapshot(): Promise<DashboardSnapshot> {
   const [publications, runsPayload, queueItems] = await Promise.all([
-    listPublications({ mode: "new", limit: 20 }),
+    listPublications({ mode: "latest", limit: 20 }),
     listRuns({ limit: 20 }),
     listQueueItems(200),
   ]);
@@ -50,7 +50,7 @@ export async function fetchDashboardSnapshot(): Promise<DashboardSnapshot> {
   const queueHealth = countQueueStatuses(queueItems.map((item) => item.status));
 
   return {
-    newCount: publications.new_count,
+    newCount: publications.latest_count,
     totalCount: publications.total_count,
     mode: publications.mode,
     latestRun: runs[0] ?? null,

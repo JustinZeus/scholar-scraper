@@ -186,7 +186,7 @@ const visibleCount = computed(() => sortedPublications.value.length);
 const visibleUnreadCount = computed(() => visibleUnreadKeys.value.size);
 const actionBusy = computed(() => loading.value || publishingAll.value || publishingSelected.value);
 const showingEmptyList = computed(() => Boolean(listState.value) && sortedPublications.value.length === 0);
-const modeLabel = computed(() => (mode.value === "new" ? "Needs review" : "All records"));
+const modeLabel = computed(() => (mode.value === "unread" ? "Unread" : "All records"));
 
 const emptyTitle = computed(() =>
   searchQuery.value.trim().length > 0 ? "No publications match this search" : "No publications found",
@@ -196,8 +196,8 @@ const emptyBody = computed(() => {
   if (searchQuery.value.trim().length > 0) {
     return "Try another title, scholar, venue, or year.";
   }
-  if (mode.value === "new") {
-    return `No publications currently need review for ${selectedScholarName.value}.`;
+  if (mode.value === "unread") {
+    return `No unread publications for ${selectedScholarName.value}.`;
   }
   return `No publication records for ${selectedScholarName.value}.`;
 });
@@ -340,14 +340,14 @@ async function onMarkSelectedRead(): Promise<void> {
 
   try {
     const response = await markSelectedRead(selections);
-    successMessage.value = `${response.updated_count} publication${response.updated_count === 1 ? "" : "s"} marked as reviewed.`;
+    successMessage.value = `${response.updated_count} publication${response.updated_count === 1 ? "" : "s"} marked as read.`;
     await loadPublications();
   } catch (error) {
     if (error instanceof ApiRequestError) {
       errorMessage.value = error.message;
       errorRequestId.value = error.requestId;
     } else {
-      errorMessage.value = "Unable to mark selected publications as reviewed.";
+      errorMessage.value = "Unable to mark selected publications as read.";
     }
   } finally {
     publishingSelected.value = false;
@@ -362,14 +362,14 @@ async function onMarkAllRead(): Promise<void> {
 
   try {
     const response = await markAllRead();
-    successMessage.value = `${response.updated_count} publication${response.updated_count === 1 ? "" : "s"} marked as reviewed.`;
+    successMessage.value = `${response.updated_count} publication${response.updated_count === 1 ? "" : "s"} marked as read.`;
     await loadPublications();
   } catch (error) {
     if (error instanceof ApiRequestError) {
       errorMessage.value = error.message;
       errorRequestId.value = error.requestId;
     } else {
-      errorMessage.value = "Unable to mark publications as reviewed.";
+      errorMessage.value = "Unable to mark publications as read.";
     }
   } finally {
     publishingAll.value = false;
@@ -400,7 +400,7 @@ watch(
 <template>
   <AppPage
     title="Publications"
-    subtitle="Filter and review discovered publications, then mark what you have handled so the next check stays focused."
+    subtitle="Filter discovered publications, then mark what you have read so upcoming checks stay focused."
   >
     <AppCard class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -408,11 +408,11 @@ watch(
           <div class="flex items-center gap-1">
             <h2 class="text-lg font-semibold text-ink-primary">What you can do here</h2>
             <AppHelpHint
-              text="Publications are discovered records from tracked scholar profiles. Review mode helps focus only on newly detected items."
+              text="Publications are records discovered from tracked scholar profiles. Unread mode focuses only on items you have not marked as read."
             />
           </div>
           <p class="text-sm text-secondary">
-            Select a scholar or time scope, search within results, and mark items reviewed when you are done.
+            Select a scholar or scope, search within results, and mark items as read when you are done.
           </p>
         </div>
 
@@ -426,12 +426,12 @@ watch(
           <span>View mode</span>
           <div class="flex min-h-10 flex-wrap items-center gap-2">
             <AppButton
-              :variant="mode === 'new' ? 'primary' : 'secondary'"
+              :variant="mode === 'unread' ? 'primary' : 'secondary'"
               class="min-w-16 justify-center"
               :disabled="actionBusy"
-              @click="setMode('new')"
+              @click="setMode('unread')"
             >
-              Needs review
+              Unread
             </AppButton>
             <AppButton
               :variant="mode === 'all' ? 'primary' : 'secondary'"
@@ -485,7 +485,7 @@ watch(
         <div class="flex flex-wrap items-center gap-2">
           <AppBadge tone="info">Mode: {{ modeLabel }}</AppBadge>
           <AppBadge tone="neutral">Visible: {{ visibleCount }}</AppBadge>
-          <AppBadge tone="warning">Needs review: {{ visibleUnreadCount }}</AppBadge>
+          <AppBadge tone="warning">Unread: {{ visibleUnreadCount }}</AppBadge>
           <AppBadge tone="success">Selected: {{ selectedCount }}</AppBadge>
         </div>
 
@@ -495,10 +495,10 @@ watch(
             :disabled="selectedCount === 0 || actionBusy"
             @click="onMarkSelectedRead"
           >
-            {{ publishingSelected ? "Updating..." : `Mark selected reviewed (${selectedCount})` }}
+            {{ publishingSelected ? "Updating..." : `Mark selected as read (${selectedCount})` }}
           </AppButton>
           <AppButton variant="secondary" :disabled="actionBusy || visibleUnreadCount === 0" @click="onMarkAllRead">
-            {{ publishingAll ? "Updating..." : "Mark all as reviewed" }}
+            {{ publishingAll ? "Updating..." : "Mark all unread as read" }}
           </AppButton>
         </div>
       </div>
@@ -518,7 +518,7 @@ watch(
         <div class="flex items-center gap-1">
           <h2 class="text-lg font-semibold text-ink-primary">Publication List</h2>
           <AppHelpHint
-            text="Use sorting, search, and bulk actions here to move discovered records from needs-review into reviewed history."
+            text="Use sorting, search, and bulk actions here to move discovered records from unread into read history."
           />
         </div>
         <span class="text-xs text-secondary">Currently showing {{ selectedScholarName }}</span>
@@ -541,7 +541,7 @@ watch(
                   class="h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
                   :checked="allVisibleUnreadSelected"
                   :disabled="visibleUnreadKeys.size === 0"
-                  aria-label="Select all visible publications that need review"
+                  aria-label="Select all visible unread publications"
                   @change="onToggleAllVisible"
                 />
               </th>
@@ -567,7 +567,7 @@ watch(
               </th>
               <th scope="col">
                 <button type="button" class="table-sort" @click="toggleSort('status')">
-                  Review status <span aria-hidden="true">{{ sortMarker("status") }}</span>
+                  Read status <span aria-hidden="true">{{ sortMarker("status") }}</span>
                 </button>
               </th>
               <th scope="col">
@@ -607,10 +607,10 @@ watch(
               <td>
                 <div class="flex flex-wrap items-center gap-2">
                   <AppBadge :tone="item.is_new_in_latest_run ? 'info' : 'neutral'">
-                    {{ item.is_new_in_latest_run ? "New this check" : "Previously seen" }}
+                    {{ item.is_new_in_latest_run ? "New this check" : "Seen before" }}
                   </AppBadge>
                   <AppBadge :tone="item.is_read ? 'success' : 'warning'">
-                    {{ item.is_read ? "Reviewed" : "Needs review" }}
+                    {{ item.is_read ? "Read" : "Unread" }}
                   </AppBadge>
                 </div>
               </td>

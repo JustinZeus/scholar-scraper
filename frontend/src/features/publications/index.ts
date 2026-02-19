@@ -1,6 +1,6 @@
 import { apiRequest } from "@/lib/api/client";
 
-export type PublicationMode = "all" | "new";
+export type PublicationMode = "all" | "unread" | "latest";
 
 export interface PublicationItem {
   publication_id: number;
@@ -19,6 +19,9 @@ export interface PublicationItem {
 export interface PublicationsResult {
   mode: PublicationMode;
   selected_scholar_profile_id: number | null;
+  unread_count: number;
+  latest_count: number;
+  // Compatibility alias for latest_count; retained while API clients migrate.
   new_count: number;
   total_count: number;
   publications: PublicationItem[];

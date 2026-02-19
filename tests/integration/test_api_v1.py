@@ -1222,8 +1222,31 @@ async def test_api_publications_list_and_mark_read(db_session: AsyncSession) -> 
     assert list_response.status_code == 200
     data = list_response.json()["data"]
     assert data["mode"] == "all"
+    assert data["total_count"] == 2
+    assert data["unread_count"] == 2
+    assert data["latest_count"] == 0
+    assert data["new_count"] == data["latest_count"]
     assert isinstance(data["publications"], list)
     assert len(data["publications"]) == 2
+
+    latest_response = client.get("/api/v1/publications?mode=latest")
+    assert latest_response.status_code == 200
+    latest_data = latest_response.json()["data"]
+    assert latest_data["mode"] == "latest"
+    assert latest_data["latest_count"] == 0
+
+    unread_response = client.get("/api/v1/publications?mode=unread")
+    assert unread_response.status_code == 200
+    unread_data = unread_response.json()["data"]
+    assert unread_data["mode"] == "unread"
+    assert unread_data["unread_count"] == 2
+
+    alias_response = client.get("/api/v1/publications?mode=new")
+    assert alias_response.status_code == 200
+    alias_data = alias_response.json()["data"]
+    assert alias_data["mode"] == "latest"
+    assert alias_data["latest_count"] == latest_data["latest_count"]
+    assert alias_data["publications"] == latest_data["publications"]
 
     mark_selected_response = client.post(
         "/api/v1/publications/mark-read",
@@ -1259,3 +1282,120 @@ async def test_api_publications_list_and_mark_read(db_session: AsyncSession) -> 
     mark_response = client.post("/api/v1/publications/mark-all-read", headers=headers)
     assert mark_response.status_code == 200
     assert mark_response.json()["data"]["updated_count"] == 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_publications_unread_and_latest_modes_can_diverge(
+    db_session: AsyncSession,
+) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-pubs-mismatch@example.com",
+        password="api-password",
+    )
+    scholar_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            RETURNING id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "mismatchScholar01",
+            "display_name": "Mismatch Scholar",
+        },
+    )
+    scholar_profile_id = int(scholar_result.scalar_one())
+
+    older_run_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO crawl_runs (user_id, trigger_type, status, scholar_count, new_pub_count)
+            VALUES (:user_id, 'manual', 'success', 1, 1)
+            RETURNING id
+            """
+        ),
+        {"user_id": user_id},
+    )
+    older_run_id = int(older_run_result.scalar_one())
+
+    latest_run_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO crawl_runs (user_id, trigger_type, status, scholar_count, new_pub_count)
+            VALUES (:user_id, 'scheduled', 'success', 1, 0)
+            RETURNING id
+            """
+        ),
+        {"user_id": user_id},
+    )
+    latest_run_id = int(latest_run_result.scalar_one())
+    assert latest_run_id > older_run_id
+
+    publication_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 12)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint": f"{(user_id + 99):064x}",
+            "title_raw": "Unread But Not Latest",
+            "title_normalized": "unread but not latest",
+        },
+    )
+    publication_id = int(publication_result.scalar_one())
+
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (
+                scholar_profile_id,
+                publication_id,
+                is_read,
+                first_seen_run_id
+            )
+            VALUES (:scholar_profile_id, :publication_id, false, :first_seen_run_id)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_profile_id,
+            "publication_id": publication_id,
+            "first_seen_run_id": older_run_id,
+        },
+    )
+    await db_session.commit()
+
+    client = TestClient(app)
+    login_user(client, email="api-pubs-mismatch@example.com", password="api-password")
+
+    unread_response = client.get("/api/v1/publications?mode=unread")
+    assert unread_response.status_code == 200
+    unread_data = unread_response.json()["data"]
+    assert unread_data["mode"] == "unread"
+    assert unread_data["unread_count"] == 1
+    assert unread_data["latest_count"] == 0
+    assert unread_data["new_count"] == 0
+    assert len(unread_data["publications"]) == 1
+    assert int(unread_data["publications"][0]["publication_id"]) == publication_id
+    assert unread_data["publications"][0]["is_new_in_latest_run"] is False
+
+    latest_response = client.get("/api/v1/publications?mode=latest")
+    assert latest_response.status_code == 200
+    latest_data = latest_response.json()["data"]
+    assert latest_data["mode"] == "latest"
+    assert latest_data["latest_count"] == 0
+    assert len(latest_data["publications"]) == 0
+
+    alias_response = client.get("/api/v1/publications?mode=new")
+    assert alias_response.status_code == 200
+    alias_data = alias_response.json()["data"]
+    assert alias_data["mode"] == "latest"
+    assert alias_data["latest_count"] == latest_data["latest_count"]
+    assert alias_data["publications"] == latest_data["publications"]
