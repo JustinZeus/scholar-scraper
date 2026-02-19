@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import scholars as scholar_service
 from app.services.scholar_parser import ParseState
 from app.services.scholar_source import FetchResult
+
+pytestmark = [pytest.mark.integration, pytest.mark.db]
 
 
 class StubScholarSource:
@@ -19,13 +22,6 @@ class StubScholarSource:
             raise RuntimeError("No stub fetch results configured.")
         index = min(self.calls - 1, len(self._fetch_results) - 1)
         return self._fetch_results[index]
-
-
-@pytest.fixture(autouse=True)
-def reset_author_search_runtime_state() -> None:
-    scholar_service._reset_author_search_runtime_state_for_tests()
-    yield
-    scholar_service._reset_author_search_runtime_state_for_tests()
 
 
 def _ok_author_search_fetch() -> FetchResult:
@@ -74,11 +70,14 @@ def _network_timeout_fetch() -> FetchResult:
 
 
 @pytest.mark.asyncio
-async def test_search_author_candidates_serves_cached_response_for_same_query() -> None:
+async def test_search_author_candidates_serves_cached_response_for_same_query(
+    db_session: AsyncSession,
+) -> None:
     source = StubScholarSource([_ok_author_search_fetch()])
 
     first = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Ada Lovelace",
         limit=10,
         network_error_retries=0,
@@ -94,6 +93,7 @@ async def test_search_author_candidates_serves_cached_response_for_same_query() 
     )
     second = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Ada Lovelace",
         limit=10,
         network_error_retries=0,
@@ -117,11 +117,14 @@ async def test_search_author_candidates_serves_cached_response_for_same_query() 
 
 
 @pytest.mark.asyncio
-async def test_search_author_candidates_trips_cooldown_after_blocked_responses() -> None:
+async def test_search_author_candidates_trips_cooldown_after_blocked_responses(
+    db_session: AsyncSession,
+) -> None:
     source = StubScholarSource([_blocked_author_search_fetch()])
 
     first = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Blocked Query",
         limit=10,
         network_error_retries=0,
@@ -137,6 +140,7 @@ async def test_search_author_candidates_trips_cooldown_after_blocked_responses()
     )
     second = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Blocked Query",
         limit=10,
         network_error_retries=0,
@@ -161,11 +165,14 @@ async def test_search_author_candidates_trips_cooldown_after_blocked_responses()
 
 
 @pytest.mark.asyncio
-async def test_search_author_candidates_emits_cooldown_alert_warning_after_threshold() -> None:
+async def test_search_author_candidates_emits_cooldown_alert_warning_after_threshold(
+    db_session: AsyncSession,
+) -> None:
     source = StubScholarSource([_blocked_author_search_fetch()])
 
     _ = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Blocked Query",
         limit=10,
         network_error_retries=0,
@@ -182,6 +189,7 @@ async def test_search_author_candidates_emits_cooldown_alert_warning_after_thres
     )
     second = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Blocked Query",
         limit=10,
         network_error_retries=0,
@@ -202,7 +210,9 @@ async def test_search_author_candidates_emits_cooldown_alert_warning_after_thres
 
 
 @pytest.mark.asyncio
-async def test_search_author_candidates_adds_retry_threshold_warning() -> None:
+async def test_search_author_candidates_adds_retry_threshold_warning(
+    db_session: AsyncSession,
+) -> None:
     source = StubScholarSource(
         [
             _network_timeout_fetch(),
@@ -213,6 +223,7 @@ async def test_search_author_candidates_adds_retry_threshold_warning() -> None:
 
     result = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Ada Lovelace",
         limit=10,
         network_error_retries=2,
@@ -234,11 +245,14 @@ async def test_search_author_candidates_adds_retry_threshold_warning() -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_author_candidates_can_be_disabled_by_configuration() -> None:
+async def test_search_author_candidates_can_be_disabled_by_configuration(
+    db_session: AsyncSession,
+) -> None:
     source = StubScholarSource([_ok_author_search_fetch()])
 
     parsed = await scholar_service.search_author_candidates(
         source=source,
+        db_session=db_session,
         query="Ada Lovelace",
         limit=5,
         network_error_retries=0,

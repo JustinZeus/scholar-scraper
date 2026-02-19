@@ -11,10 +11,12 @@ EXPECTED_TABLES = {
     "scholar_publications",
     "crawl_runs",
     "ingestion_queue_items",
+    "author_search_runtime_state",
+    "author_search_cache_entries",
 }
 
 EXPECTED_ENUMS = {"run_status", "run_trigger_type"}
-EXPECTED_REVISION = "20260219_0009"
+EXPECTED_REVISION = "20260219_0010"
 
 
 @pytest.mark.integration

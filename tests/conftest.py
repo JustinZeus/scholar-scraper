@@ -19,6 +19,8 @@ from app.settings import settings
 RESET_SQL = text(
     """
     TRUNCATE TABLE
+      author_search_cache_entries,
+      author_search_runtime_state,
       ingestion_queue_items,
       scholar_publications,
       crawl_runs,

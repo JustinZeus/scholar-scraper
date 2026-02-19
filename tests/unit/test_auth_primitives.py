@@ -32,3 +32,22 @@ def test_rate_limiter_enforces_windowed_attempt_budget() -> None:
     clock["now"] = 11.0
     assert limiter.check(key).allowed
 
+
+def test_rate_limiter_check_does_not_create_or_retain_empty_keys() -> None:
+    clock = {"now": 0.0}
+    limiter = SlidingWindowRateLimiter(
+        max_attempts=2,
+        window_seconds=10,
+        now=lambda: clock["now"],
+    )
+    key = "127.0.0.1:never-failed@example.com"
+
+    assert limiter.check(key).allowed
+    assert key not in limiter._attempts
+
+    limiter.record_failure(key)
+    assert key in limiter._attempts
+
+    clock["now"] = 11.0
+    assert limiter.check(key).allowed
+    assert key not in limiter._attempts

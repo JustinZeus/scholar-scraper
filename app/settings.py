@@ -64,6 +64,10 @@ class Settings:
         "DATABASE_URL",
         "postgresql+asyncpg://scholar:scholar@db:5432/scholar",
     )
+    database_pool_mode: str = _env_str("DATABASE_POOL_MODE", "auto")
+    database_pool_size: int = _env_int("DATABASE_POOL_SIZE", 5)
+    database_pool_max_overflow: int = _env_int("DATABASE_POOL_MAX_OVERFLOW", 10)
+    database_pool_timeout_seconds: int = _env_int("DATABASE_POOL_TIMEOUT_SECONDS", 30)
     session_secret_key: str = os.getenv("SESSION_SECRET_KEY", "dev-insecure-session-key")
     session_cookie_secure: bool = _env_bool("SESSION_COOKIE_SECURE", False)
     security_headers_enabled: bool = _env_bool("SECURITY_HEADERS_ENABLED", True)

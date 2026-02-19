@@ -195,7 +195,7 @@ def _build_profile_url(*, scholar_id: str, cstart: int, pagesize: int) -> str:
     query: dict[str, int | str] = {"hl": "en", "user": scholar_id}
     if cstart > 0:
         query["cstart"] = int(cstart)
-    if pagesize > 0 and cstart > 0:
+    if pagesize > 0:
         query["pagesize"] = int(pagesize)
     return f"{SCHOLAR_PROFILE_URL}?{urlencode(query)}"
 
