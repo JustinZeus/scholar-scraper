@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api/client";
+import { type ScrapeSafetyState } from "@/features/safety";
 
 export interface RunListItem {
   id: number;
@@ -49,6 +50,7 @@ export interface RunDetail {
   run: RunListItem;
   summary: RunSummary;
   scholar_results: RunScholarResult[];
+  safety_state: ScrapeSafetyState;
 }
 
 export interface QueueItem {
@@ -68,6 +70,7 @@ export interface QueueItem {
 
 interface RunsListData {
   runs: RunListItem[];
+  safety_state: ScrapeSafetyState;
 }
 
 interface QueueListData {
@@ -79,7 +82,7 @@ export interface RunsListQuery {
   limit?: number;
 }
 
-export async function listRuns(query: RunsListQuery = {}): Promise<RunListItem[]> {
+export async function listRuns(query: RunsListQuery = {}): Promise<RunsListData> {
   const params = new URLSearchParams();
   if (query.failedOnly) {
     params.set("failed_only", "true");
@@ -92,7 +95,7 @@ export async function listRuns(query: RunsListQuery = {}): Promise<RunListItem[]
   const response = await apiRequest<RunsListData>(`/runs${suffix ? `?${suffix}` : ""}`, {
     method: "GET",
   });
-  return response.data.runs;
+  return response.data;
 }
 
 export async function getRunDetail(runId: number): Promise<RunDetail> {
@@ -118,6 +121,7 @@ export async function triggerManualRun(): Promise<{
   new_publication_count: number;
   reused_existing_run: boolean;
   idempotency_key: string | null;
+  safety_state: ScrapeSafetyState;
 }> {
   const headers: Record<string, string> = {
     "Idempotency-Key": generateIdempotencyKey(),
@@ -133,6 +137,7 @@ export async function triggerManualRun(): Promise<{
     new_publication_count: number;
     reused_existing_run: boolean;
     idempotency_key: string | null;
+    safety_state: ScrapeSafetyState;
   }>("/runs/manual", {
     method: "POST",
     headers,

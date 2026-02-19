@@ -22,6 +22,7 @@ from app.api.schemas import (
 from app.db.models import RunStatus, RunTriggerType, User
 from app.db.session import get_db_session
 from app.services import ingestion as ingestion_service
+from app.services import run_safety as run_safety_service
 from app.services import runs as run_service
 from app.services import user_settings as user_settings_service
 from app.settings import settings
@@ -253,6 +254,7 @@ def _manual_run_payload_from_run(
     *,
     idempotency_key: str | None,
     reused_existing_run: bool,
+    safety_state: dict[str, Any],
 ) -> dict[str, Any]:
     summary = run_service.extract_run_summary(run.error_log)
     return {
@@ -265,7 +267,35 @@ def _manual_run_payload_from_run(
         "new_publication_count": int(run.new_pub_count or 0),
         "reused_existing_run": reused_existing_run,
         "idempotency_key": idempotency_key,
+        "safety_state": safety_state,
     }
+
+
+async def _load_safety_state(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+) -> dict[str, Any]:
+    user_settings = await user_settings_service.get_or_create_settings(
+        db_session,
+        user_id=user_id,
+    )
+    previous_safety_state = run_safety_service.get_safety_event_context(user_settings)
+    if run_safety_service.clear_expired_cooldown(user_settings):
+        await db_session.commit()
+        await db_session.refresh(user_settings)
+        logger.info(
+            "api.runs.safety_cooldown_cleared",
+            extra={
+                "event": "api.runs.safety_cooldown_cleared",
+                "user_id": user_id,
+                "reason": previous_safety_state.get("cooldown_reason"),
+                "cooldown_until": previous_safety_state.get("cooldown_until"),
+                "metric_name": "api_runs_safety_cooldown_cleared_total",
+                "metric_value": 1,
+            },
+        )
+    return run_safety_service.get_safety_state_payload(user_settings)
 
 
 @router.get(
@@ -285,10 +315,15 @@ async def list_runs(
         limit=limit,
         failed_only=failed_only,
     )
+    safety_state = await _load_safety_state(
+        db_session,
+        user_id=current_user.id,
+    )
     return success_payload(
         request,
         data={
             "runs": [_serialize_run(run) for run in runs],
+            "safety_state": safety_state,
         },
     )
 
@@ -318,12 +353,17 @@ async def get_run(
     scholar_results = error_log.get("scholar_results")
     if not isinstance(scholar_results, list):
         scholar_results = []
+    safety_state = await _load_safety_state(
+        db_session,
+        user_id=current_user.id,
+    )
     return success_payload(
         request,
         data={
             "run": _serialize_run(run),
             "summary": run_service.extract_run_summary(error_log),
             "scholar_results": [_normalize_scholar_result(item) for item in scholar_results],
+            "safety_state": safety_state,
         },
     )
 
@@ -338,6 +378,34 @@ async def run_manual(
     current_user: User = Depends(get_api_current_user),
     ingest_service: ingestion_service.ScholarIngestionService = Depends(get_ingestion_service),
 ):
+    safety_state = await _load_safety_state(
+        db_session,
+        user_id=current_user.id,
+    )
+    if not settings.ingestion_manual_run_allowed:
+        logger.warning(
+            "api.runs.manual_blocked_policy",
+            extra={
+                "event": "api.runs.manual_blocked_policy",
+                "user_id": current_user.id,
+                "policy": {"manual_run_allowed": False},
+                "safety_state": safety_state,
+                "metric_name": "api_runs_manual_blocked_policy_total",
+                "metric_value": 1,
+            },
+        )
+        raise ApiException(
+            status_code=403,
+            code="manual_runs_disabled",
+            message="Manual checks are disabled by server policy.",
+            details={
+                "policy": {
+                    "manual_run_allowed": False,
+                },
+                "safety_state": safety_state,
+            },
+        )
+
     idempotency_key = _normalize_idempotency_key(request.headers.get(IDEMPOTENCY_HEADER))
     if idempotency_key is not None:
         previous_run = await run_service.get_manual_run_by_idempotency_key(
@@ -362,6 +430,7 @@ async def run_manual(
                     previous_run,
                     idempotency_key=idempotency_key,
                     reused_existing_run=True,
+                    safety_state=safety_state,
                 ),
             )
 
@@ -393,6 +462,28 @@ async def run_manual(
             code="run_in_progress",
             message="A run is already in progress for this account.",
         ) from exc
+    except ingestion_service.RunBlockedBySafetyPolicyError as exc:
+        await db_session.rollback()
+        logger.info(
+            "api.runs.manual_blocked_safety",
+            extra={
+                "event": "api.runs.manual_blocked_safety",
+                "user_id": current_user.id,
+                "reason": exc.safety_state.get("cooldown_reason"),
+                "cooldown_until": exc.safety_state.get("cooldown_until"),
+                "cooldown_remaining_seconds": exc.safety_state.get("cooldown_remaining_seconds"),
+                "metric_name": "api_runs_manual_blocked_safety_total",
+                "metric_value": 1,
+            },
+        )
+        raise ApiException(
+            status_code=429,
+            code=exc.code,
+            message=exc.message,
+            details={
+                "safety_state": exc.safety_state,
+            },
+        ) from exc
     except IntegrityError as exc:
         await db_session.rollback()
         if idempotency_key is not None:
@@ -418,6 +509,10 @@ async def run_manual(
                         existing_run,
                         idempotency_key=idempotency_key,
                         reused_existing_run=True,
+                        safety_state=await _load_safety_state(
+                            db_session,
+                            user_id=current_user.id,
+                        ),
                     ),
                 )
         logger.exception(
@@ -447,6 +542,10 @@ async def run_manual(
             message="Manual run failed.",
         ) from exc
 
+    current_safety_state = await _load_safety_state(
+        db_session,
+        user_id=current_user.id,
+    )
     return success_payload(
         request,
         data={
@@ -459,6 +558,7 @@ async def run_manual(
             "new_publication_count": run_summary.new_publication_count,
             "reused_existing_run": False,
             "idempotency_key": idempotency_key,
+            "safety_state": current_safety_state,
         },
     )
 

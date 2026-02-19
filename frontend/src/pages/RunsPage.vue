@@ -6,6 +6,7 @@ import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
 import QueueHealthBadge from "@/components/patterns/QueueHealthBadge.vue";
 import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import RunStatusBadge from "@/components/patterns/RunStatusBadge.vue";
+import ScrapeSafetyBanner from "@/components/patterns/ScrapeSafetyBanner.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
@@ -22,6 +23,7 @@ import {
 } from "@/features/runs";
 import { ApiRequestError } from "@/lib/api/errors";
 import { useRunStatusStore } from "@/stores/run_status";
+import { useUserSettingsStore } from "@/stores/user_settings";
 
 const loading = ref(true);
 const runs = ref<RunListItem[]>([]);
@@ -31,6 +33,7 @@ const errorRequestId = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const activeQueueItemId = ref<number | null>(null);
 const runStatus = useRunStatusStore();
+const userSettings = useUserSettingsStore();
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -59,7 +62,31 @@ function queueHealth() {
 
 const queueCounts = computed(() => queueHealth());
 const activeRunId = computed(() => runStatus.latestRun?.status === "running" ? runStatus.latestRun.id : null);
+const isStartBlocked = computed(
+  () =>
+    runStatus.isRunActive ||
+    !userSettings.manualRunAllowed ||
+    runStatus.safetyState.cooldown_active,
+);
+const startCheckDisabledReason = computed(() => {
+  if (!userSettings.manualRunAllowed) {
+    return "Manual checks are disabled by server policy.";
+  }
+  if (runStatus.safetyState.cooldown_active) {
+    return runStatus.safetyState.cooldown_reason_label || "Safety cooldown is active.";
+  }
+  if (runStatus.isRunActive) {
+    return "A check is already in progress.";
+  }
+  return null;
+});
 const runButtonLabel = computed(() => {
+  if (!userSettings.manualRunAllowed) {
+    return "Manual checks disabled";
+  }
+  if (runStatus.safetyState.cooldown_active) {
+    return "Safety cooldown";
+  }
   if (runStatus.isLikelyRunning) {
     return "Check in progress";
   }
@@ -75,10 +102,11 @@ async function loadData(): Promise<void> {
   errorRequestId.value = null;
 
   try {
-    const [loadedRuns, loadedQueue] = await Promise.all([listRuns({ limit: 100 }), listQueueItems(200)]);
-    runs.value = loadedRuns;
+    const [loadedRunsPayload, loadedQueue] = await Promise.all([listRuns({ limit: 100 }), listQueueItems(200)]);
+    runs.value = loadedRunsPayload.runs;
     queueItems.value = loadedQueue;
-    runStatus.setLatestRun(loadedRuns[0] ?? null);
+    runStatus.setLatestRun(loadedRunsPayload.runs[0] ?? null);
+    runStatus.setSafetyState(loadedRunsPayload.safety_state);
   } catch (error) {
     runs.value = [];
     queueItems.value = [];
@@ -174,8 +202,12 @@ onMounted(() => {
           :dropped="queueCounts.dropped"
         />
       </div>
+      <ScrapeSafetyBanner
+        :safety-state="runStatus.safetyState"
+        :manual-run-allowed="userSettings.manualRunAllowed"
+      />
       <div class="flex flex-wrap items-center gap-2">
-        <AppButton :disabled="runStatus.isRunActive" @click="onTriggerManualRun">
+        <AppButton :disabled="isStartBlocked" :title="startCheckDisabledReason || undefined" @click="onTriggerManualRun">
           {{ runButtonLabel }}
         </AppButton>
         <AppButton variant="secondary" :disabled="loading" @click="loadData">

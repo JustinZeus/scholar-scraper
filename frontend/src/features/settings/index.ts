@@ -1,6 +1,27 @@
 import { apiRequest } from "@/lib/api/client";
+import { type ScrapeSafetyState } from "@/features/safety";
+
+export interface UserSettingsPolicy {
+  min_run_interval_minutes: number;
+  min_request_delay_seconds: number;
+  automation_allowed: boolean;
+  manual_run_allowed: boolean;
+  blocked_failure_threshold: number;
+  network_failure_threshold: number;
+  cooldown_blocked_seconds: number;
+  cooldown_network_seconds: number;
+}
 
 export interface UserSettings {
+  auto_run_enabled: boolean;
+  run_interval_minutes: number;
+  request_delay_seconds: number;
+  nav_visible_pages: string[];
+  policy: UserSettingsPolicy;
+  safety_state: ScrapeSafetyState;
+}
+
+export interface UserSettingsUpdate {
   auto_run_enabled: boolean;
   run_interval_minutes: number;
   request_delay_seconds: number;
@@ -18,7 +39,7 @@ export async function fetchSettings(): Promise<UserSettings> {
   return response.data;
 }
 
-export async function updateSettings(payload: UserSettings): Promise<UserSettings> {
+export async function updateSettings(payload: UserSettingsUpdate): Promise<UserSettings> {
   const response = await apiRequest<UserSettings>("/settings", {
     method: "PUT",
     body: payload,

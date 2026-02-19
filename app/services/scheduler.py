@@ -18,7 +18,11 @@ from app.db.models import (
 )
 from app.db.session import get_session_factory
 from app.services import continuation_queue as queue_service
-from app.services.ingestion import RunAlreadyInProgressError, ScholarIngestionService
+from app.services.ingestion import (
+    RunAlreadyInProgressError,
+    RunBlockedBySafetyPolicyError,
+    ScholarIngestionService,
+)
 from app.services.scholar_source import LiveScholarSource
 from app.settings import settings
 
@@ -30,6 +34,8 @@ class _AutoRunCandidate:
     user_id: int
     run_interval_minutes: int
     request_delay_seconds: int
+    cooldown_until: datetime | None
+    cooldown_reason: str | None
 
 
 class SchedulerService:
@@ -134,6 +140,9 @@ class SchedulerService:
             await self._run_candidate(candidate)
 
     async def _load_candidates(self) -> list[_AutoRunCandidate]:
+        if not settings.ingestion_automation_allowed:
+            return []
+
         session_factory = get_session_factory()
         async with session_factory() as session:
             result = await session.execute(
@@ -141,6 +150,8 @@ class SchedulerService:
                     UserSetting.user_id,
                     UserSetting.run_interval_minutes,
                     UserSetting.request_delay_seconds,
+                    UserSetting.scrape_cooldown_until,
+                    UserSetting.scrape_cooldown_reason,
                 )
                 .join(User, User.id == UserSetting.user_id)
                 .where(
@@ -150,14 +161,35 @@ class SchedulerService:
                 .order_by(UserSetting.user_id.asc())
             )
             rows = result.all()
-        return [
-            _AutoRunCandidate(
-                user_id=int(user_id),
-                run_interval_minutes=int(run_interval_minutes),
-                request_delay_seconds=int(request_delay_seconds),
+        now_utc = datetime.now(timezone.utc)
+        candidates: list[_AutoRunCandidate] = []
+        for user_id, run_interval_minutes, request_delay_seconds, cooldown_until, cooldown_reason in rows:
+            if cooldown_until is not None and cooldown_until.tzinfo is None:
+                cooldown_until = cooldown_until.replace(tzinfo=timezone.utc)
+            if cooldown_until is not None and cooldown_until > now_utc:
+                logger.info(
+                    "scheduler.run_skipped_safety_cooldown_precheck",
+                    extra={
+                        "event": "scheduler.run_skipped_safety_cooldown_precheck",
+                        "user_id": int(user_id),
+                        "reason": cooldown_reason,
+                        "cooldown_until": cooldown_until,
+                        "cooldown_remaining_seconds": int((cooldown_until - now_utc).total_seconds()),
+                        "metric_name": "scheduler_run_skipped_safety_cooldown_total",
+                        "metric_value": 1,
+                    },
+                )
+                continue
+            candidates.append(
+                _AutoRunCandidate(
+                    user_id=int(user_id),
+                    run_interval_minutes=int(run_interval_minutes),
+                    request_delay_seconds=int(request_delay_seconds),
+                    cooldown_until=cooldown_until,
+                    cooldown_reason=(str(cooldown_reason).strip() if cooldown_reason else None),
+                )
             )
-            for user_id, run_interval_minutes, request_delay_seconds in rows
-        ]
+        return candidates
 
     async def _is_due(self, candidate: _AutoRunCandidate, *, now: datetime) -> bool:
         session_factory = get_session_factory()
@@ -207,6 +239,21 @@ class SchedulerService:
                     extra={
                         "event": "scheduler.run_skipped_locked",
                         "user_id": candidate.user_id,
+                    },
+                )
+                return
+            except RunBlockedBySafetyPolicyError as exc:
+                await session.rollback()
+                logger.info(
+                    "scheduler.run_skipped_safety_cooldown",
+                    extra={
+                        "event": "scheduler.run_skipped_safety_cooldown",
+                        "user_id": candidate.user_id,
+                        "reason": exc.safety_state.get("cooldown_reason"),
+                        "cooldown_until": exc.safety_state.get("cooldown_until"),
+                        "cooldown_remaining_seconds": exc.safety_state.get("cooldown_remaining_seconds"),
+                        "metric_name": "scheduler_run_skipped_safety_cooldown_total",
+                        "metric_value": 1,
                     },
                 )
                 return
@@ -351,6 +398,34 @@ class SchedulerService:
                         "event": "scheduler.queue_item_deferred_lock",
                         "queue_item_id": job.id,
                         "user_id": job.user_id,
+                    },
+                )
+                return
+            except RunBlockedBySafetyPolicyError as exc:
+                await session.rollback()
+                cooldown_remaining_seconds = max(
+                    self._tick_seconds,
+                    int(exc.safety_state.get("cooldown_remaining_seconds") or 0),
+                )
+                async with session_factory() as recovery_session:
+                    await queue_service.reschedule_job(
+                        recovery_session,
+                        job_id=job.id,
+                        delay_seconds=max(self._tick_seconds, cooldown_remaining_seconds),
+                        reason="scrape_safety_cooldown",
+                        error=str(exc.message),
+                    )
+                    await recovery_session.commit()
+                logger.info(
+                    "scheduler.queue_item_deferred_safety_cooldown",
+                    extra={
+                        "event": "scheduler.queue_item_deferred_safety_cooldown",
+                        "queue_item_id": job.id,
+                        "user_id": job.user_id,
+                        "reason": exc.safety_state.get("cooldown_reason"),
+                        "cooldown_remaining_seconds": cooldown_remaining_seconds,
+                        "metric_name": "scheduler_queue_item_deferred_safety_cooldown_total",
+                        "metric_value": 1,
                     },
                 )
                 return

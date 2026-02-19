@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 
 import { listRuns, triggerManualRun, type RunListItem } from "@/features/runs";
+import {
+  createDefaultSafetyState,
+  normalizeSafetyState,
+  type ScrapeSafetyState,
+} from "@/features/safety";
 import { ApiRequestError } from "@/lib/api/errors";
 
 export const RUN_STATUS_POLL_INTERVAL_MS = 5000;
@@ -49,6 +54,19 @@ function extractRunIdFromDetails(details: unknown): number | null {
   return parseRunId(runIdCandidate);
 }
 
+function extractSafetyStateFromDetails(details: unknown): ScrapeSafetyState | null {
+  if (!details || typeof details !== "object") {
+    return null;
+  }
+
+  const candidate = (details as Record<string, unknown>).safety_state;
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+
+  return normalizeSafetyState(candidate);
+}
+
 function buildPlaceholderRunningRun(runId: number): RunListItem {
   return {
     id: runId,
@@ -66,6 +84,7 @@ function buildPlaceholderRunningRun(runId: number): RunListItem {
 export const useRunStatusStore = defineStore("runStatus", {
   state: () => ({
     latestRun: null as RunListItem | null,
+    safetyState: createDefaultSafetyState() as ScrapeSafetyState,
     isSubmitting: false,
     assumeRunningFromSubmission: false,
     isPolling: false,
@@ -81,7 +100,7 @@ export const useRunStatusStore = defineStore("runStatus", {
       return state.latestRun?.status === "running" || state.assumeRunningFromSubmission;
     },
     canStart(): boolean {
-      return !this.isRunActive;
+      return !this.isRunActive && !this.safetyState.cooldown_active;
     },
   },
   actions: {
@@ -112,6 +131,9 @@ export const useRunStatusStore = defineStore("runStatus", {
         this.assumeRunningFromSubmission = false;
       }
       this.updatePolling();
+    },
+    setSafetyState(value: unknown): void {
+      this.safetyState = normalizeSafetyState(value);
     },
     startPolling(): void {
       if (pollTimer !== null) {
@@ -146,9 +168,10 @@ export const useRunStatusStore = defineStore("runStatus", {
 
       syncPromise = (async () => {
         try {
-          const runs = await listRuns({ limit: 1 });
-          const latest = runs[0] ?? null;
+          const payload = await listRuns({ limit: 1 });
+          const latest = payload.runs[0] ?? null;
           this.latestRun = latest;
+          this.safetyState = normalizeSafetyState(payload.safety_state);
           this.lastSyncAt = Date.now();
           this.lastErrorMessage = null;
           this.lastErrorRequestId = null;
@@ -184,6 +207,18 @@ export const useRunStatusStore = defineStore("runStatus", {
           requestId: null,
         };
       }
+      if (this.safetyState.cooldown_active) {
+        const message =
+          this.safetyState.recommended_action ||
+          "Scrape safety cooldown is active; run start is temporarily blocked.";
+        this.lastErrorMessage = message;
+        this.lastErrorRequestId = null;
+        return {
+          kind: "error",
+          message,
+          requestId: null,
+        };
+      }
 
       this.isSubmitting = true;
       this.lastErrorMessage = null;
@@ -193,6 +228,7 @@ export const useRunStatusStore = defineStore("runStatus", {
 
       try {
         const result = await triggerManualRun();
+        this.safetyState = normalizeSafetyState(result.safety_state);
         await this.syncLatest();
 
         if (!this.latestRun || this.latestRun.id !== result.run_id) {
@@ -219,6 +255,20 @@ export const useRunStatusStore = defineStore("runStatus", {
           return {
             kind: "already_running",
             runId: this.latestRun?.id ?? runId,
+            requestId: error.requestId,
+          };
+        }
+
+        if (error instanceof ApiRequestError && error.code === "scrape_cooldown_active") {
+          const safetyState = extractSafetyStateFromDetails(error.details);
+          if (safetyState) {
+            this.safetyState = safetyState;
+          }
+          this.lastErrorMessage = error.message;
+          this.lastErrorRequestId = error.requestId;
+          return {
+            kind: "error",
+            message: error.message,
             requestId: error.requestId,
           };
         }
@@ -259,6 +309,7 @@ export const useRunStatusStore = defineStore("runStatus", {
       this.lastErrorMessage = null;
       this.lastErrorRequestId = null;
       this.lastSyncAt = null;
+      this.safetyState = createDefaultSafetyState();
     },
   },
 });

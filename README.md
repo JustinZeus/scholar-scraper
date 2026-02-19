@@ -70,6 +70,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 - `Dockerfile`: multi-stage build (frontend + backend runtime).
 - `README.md`: deployment and operations reference.
 - `CONTRIBUTING.md`: contribution policy and merge checklist.
+- `docs/ops/scrape_safety_runbook.md`: scrape cooldown and blocked-IP operations guide.
 - `scripts/check_no_generated_artifacts.sh`: tracked-artifact guard used by CI.
 
 ## Data Model Notes
@@ -170,6 +171,10 @@ Notes:
 | --- | --- | --- | --- | --- |
 | `SCHEDULER_ENABLED` | `1` | boolean | deploy, dev | Enable background scheduler loop. |
 | `SCHEDULER_TICK_SECONDS` | `60` | integer >= 1 | deploy, dev | Scheduler interval in seconds. |
+| `INGESTION_AUTOMATION_ALLOWED` | `1` | boolean | deploy, dev | Global safety switch for scheduled/automatic checks. When disabled, auto-run settings are forced off. |
+| `INGESTION_MANUAL_RUN_ALLOWED` | `1` | boolean | deploy, dev | Global safety switch for manual checks from API/UI. |
+| `INGESTION_MIN_RUN_INTERVAL_MINUTES` | `15` | integer >= 15 | deploy, dev | Server-enforced minimum for user-configured automatic check interval. |
+| `INGESTION_MIN_REQUEST_DELAY_SECONDS` | `2` | integer >= 2 | deploy, dev | Server-enforced minimum delay between scholar requests. |
 | `SCHEDULER_QUEUE_BATCH_SIZE` | `10` | integer >= 1 | deploy, dev | Queue items processed per scheduler tick. |
 | `INGESTION_NETWORK_ERROR_RETRIES` | `1` | integer >= 0 | deploy, dev | Retries for transient ingestion network errors. |
 | `INGESTION_RETRY_BACKOFF_SECONDS` | `1.0` | float >= 0 | deploy, dev | Backoff delay for retry attempts. |
@@ -178,6 +183,8 @@ Notes:
 | `INGESTION_ALERT_BLOCKED_FAILURE_THRESHOLD` | `1` | integer >= 1 | deploy, dev | Trigger blocked/captcha scrape alert flag when this many blocked failures occur in a run. |
 | `INGESTION_ALERT_NETWORK_FAILURE_THRESHOLD` | `2` | integer >= 1 | deploy, dev | Trigger network scrape alert flag when this many network failures occur in a run. |
 | `INGESTION_ALERT_RETRY_SCHEDULED_THRESHOLD` | `3` | integer >= 1 | deploy, dev | Trigger retry alert flag when scheduled retry count reaches this threshold in a run. |
+| `INGESTION_SAFETY_COOLDOWN_BLOCKED_SECONDS` | `1800` | integer >= 60 | deploy, dev | Cooldown duration applied when blocked-failure threshold is exceeded. |
+| `INGESTION_SAFETY_COOLDOWN_NETWORK_SECONDS` | `900` | integer >= 60 | deploy, dev | Cooldown duration applied when network-failure threshold is exceeded. |
 | `INGESTION_CONTINUATION_QUEUE_ENABLED` | `1` | boolean | deploy, dev | Enable continuation queue for long runs. |
 | `INGESTION_CONTINUATION_BASE_DELAY_SECONDS` | `120` | integer >= 0 | deploy, dev | Initial delay before retrying continuation queue items. |
 | `INGESTION_CONTINUATION_MAX_DELAY_SECONDS` | `3600` | integer >= 0 | deploy, dev | Maximum continuation retry delay. |
@@ -199,6 +206,16 @@ Notes:
 | `SCHOLAR_NAME_SEARCH_COOLDOWN_SECONDS` | `1800` | integer >= 1 | deploy, dev | Cooldown duration after repeated blocked responses. |
 | `SCHOLAR_NAME_SEARCH_ALERT_RETRY_COUNT_THRESHOLD` | `2` | integer >= 1 | deploy, dev | Emit retry-threshold observability warning when name-search retry count reaches this value. |
 | `SCHOLAR_NAME_SEARCH_ALERT_COOLDOWN_REJECTIONS_THRESHOLD` | `3` | integer >= 1 | deploy, dev | Emit cooldown-threshold observability alert after this many requests are rejected during active cooldown. |
+
+### Scrape Safety Operations
+
+- Structured safety events are emitted for:
+  - policy/manual run blocks,
+  - cooldown entered/cleared transitions,
+  - blocked/network/retry threshold trips,
+  - scheduler cooldown skips/deferments.
+- Use `LOG_FORMAT=json` and ship logs to your preferred collector for alerting.
+- Runbook: `docs/ops/scrape_safety_runbook.md`.
 
 ### Startup Bootstrap and DB Wait
 

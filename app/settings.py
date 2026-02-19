@@ -115,6 +115,22 @@ class Settings:
     log_redact_fields: str = os.getenv("LOG_REDACT_FIELDS", "")
     scheduler_enabled: bool = _env_bool("SCHEDULER_ENABLED", True)
     scheduler_tick_seconds: int = _env_int("SCHEDULER_TICK_SECONDS", 60)
+    ingestion_automation_allowed: bool = _env_bool(
+        "INGESTION_AUTOMATION_ALLOWED",
+        True,
+    )
+    ingestion_manual_run_allowed: bool = _env_bool(
+        "INGESTION_MANUAL_RUN_ALLOWED",
+        True,
+    )
+    ingestion_min_run_interval_minutes: int = _env_int(
+        "INGESTION_MIN_RUN_INTERVAL_MINUTES",
+        15,
+    )
+    ingestion_min_request_delay_seconds: int = _env_int(
+        "INGESTION_MIN_REQUEST_DELAY_SECONDS",
+        2,
+    )
     ingestion_network_error_retries: int = _env_int("INGESTION_NETWORK_ERROR_RETRIES", 1)
     ingestion_retry_backoff_seconds: float = _env_float(
         "INGESTION_RETRY_BACKOFF_SECONDS",
@@ -136,6 +152,14 @@ class Settings:
     ingestion_alert_retry_scheduled_threshold: int = _env_int(
         "INGESTION_ALERT_RETRY_SCHEDULED_THRESHOLD",
         3,
+    )
+    ingestion_safety_cooldown_blocked_seconds: int = _env_int(
+        "INGESTION_SAFETY_COOLDOWN_BLOCKED_SECONDS",
+        1800,
+    )
+    ingestion_safety_cooldown_network_seconds: int = _env_int(
+        "INGESTION_SAFETY_COOLDOWN_NETWORK_SECONDS",
+        900,
     )
     ingestion_continuation_queue_enabled: bool = _env_bool(
         "INGESTION_CONTINUATION_QUEUE_ENABLED",

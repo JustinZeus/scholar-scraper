@@ -4,6 +4,7 @@ import {
   type PublicationMode,
 } from "@/features/publications";
 import { listQueueItems, listRuns, type RunListItem } from "@/features/runs";
+import { type ScrapeSafetyState } from "@/features/safety";
 
 export interface QueueHealth {
   queued: number;
@@ -19,6 +20,7 @@ export interface DashboardSnapshot {
   recentRuns: RunListItem[];
   recentPublications: PublicationItem[];
   queue: QueueHealth;
+  safetyState: ScrapeSafetyState;
 }
 
 function countQueueStatuses(statuses: string[]): QueueHealth {
@@ -38,11 +40,12 @@ function countQueueStatuses(statuses: string[]): QueueHealth {
 }
 
 export async function fetchDashboardSnapshot(): Promise<DashboardSnapshot> {
-  const [publications, runs, queueItems] = await Promise.all([
+  const [publications, runsPayload, queueItems] = await Promise.all([
     listPublications({ mode: "new", limit: 20 }),
     listRuns({ limit: 20 }),
     listQueueItems(200),
   ]);
+  const runs = runsPayload.runs;
 
   const queueHealth = countQueueStatuses(queueItems.map((item) => item.status));
 
@@ -54,5 +57,6 @@ export async function fetchDashboardSnapshot(): Promise<DashboardSnapshot> {
     recentRuns: runs,
     recentPublications: publications.publications,
     queue: queueHealth,
+    safetyState: runsPayload.safety_state,
   };
 }

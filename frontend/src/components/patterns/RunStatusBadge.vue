@@ -20,6 +20,9 @@ const toneClass = computed(() => {
   if (props.status === "running") {
     return "border-state-info-border bg-state-info-bg text-state-info-text";
   }
+  if (props.status === "starting") {
+    return "border-state-info-border bg-state-info-bg text-state-info-text";
+  }
   return "border-stroke-default bg-surface-card-muted text-ink-secondary";
 });
 </script>
