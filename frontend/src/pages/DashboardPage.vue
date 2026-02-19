@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 
 import { fetchDashboardSnapshot, type DashboardSnapshot } from "@/features/dashboard";
-import { triggerManualRun } from "@/features/runs";
 import { ApiRequestError } from "@/lib/api/errors";
 import AppPage from "@/components/layout/AppPage.vue";
 import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
@@ -14,14 +13,67 @@ import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import { useAuthStore } from "@/stores/auth";
+import { useRunStatusStore } from "@/stores/run_status";
 
 const loading = ref(true);
-const pendingRun = ref(false);
 const errorMessage = ref<string | null>(null);
 const errorRequestId = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const snapshot = ref<DashboardSnapshot | null>(null);
 const auth = useAuthStore();
+const runStatus = useRunStatusStore();
+
+const startCheckLabel = computed(() => {
+  if (runStatus.isLikelyRunning) {
+    return "Check in progress";
+  }
+  if (runStatus.isSubmitting) {
+    return "Starting...";
+  }
+  return "Start check";
+});
+
+const displayedLatestRun = computed(() => {
+  const snapshotLatest = snapshot.value?.latestRun ?? null;
+  const sharedLatest = runStatus.latestRun;
+
+  if (!snapshotLatest) {
+    return sharedLatest;
+  }
+  if (!sharedLatest) {
+    return snapshotLatest;
+  }
+  if (sharedLatest.id > snapshotLatest.id) {
+    return sharedLatest;
+  }
+  if (sharedLatest.id < snapshotLatest.id) {
+    return snapshotLatest;
+  }
+  return sharedLatest;
+});
+
+const recentRuns = computed(() => {
+  const baseRuns = snapshot.value?.recentRuns ?? [];
+  const mergedRuns = [...baseRuns];
+  const latest = displayedLatestRun.value;
+
+  if (!latest) {
+    return mergedRuns;
+  }
+
+  const existingIndex = mergedRuns.findIndex((run) => run.id === latest.id);
+  if (existingIndex === -1) {
+    mergedRuns.unshift(latest);
+    return mergedRuns;
+  }
+
+  mergedRuns.splice(existingIndex, 1, latest);
+  return mergedRuns;
+});
+const activeRunId = computed(() => runStatus.latestRun?.status === "running" ? runStatus.latestRun.id : null);
+const showRunningHint = computed(
+  () => runStatus.isLikelyRunning && displayedLatestRun.value?.status !== "running",
+);
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -40,7 +92,9 @@ async function loadSnapshot(): Promise<void> {
   errorRequestId.value = null;
 
   try {
-    snapshot.value = await fetchDashboardSnapshot();
+    const dashboardSnapshot = await fetchDashboardSnapshot();
+    snapshot.value = dashboardSnapshot;
+    runStatus.setLatestRun(dashboardSnapshot.latestRun);
   } catch (error) {
     snapshot.value = null;
     if (error instanceof ApiRequestError) {
@@ -55,24 +109,31 @@ async function loadSnapshot(): Promise<void> {
 }
 
 async function onTriggerRun(): Promise<void> {
-  pendingRun.value = true;
   errorMessage.value = null;
   errorRequestId.value = null;
   successMessage.value = null;
 
   try {
-    const result = await triggerManualRun();
-    successMessage.value = `Update check #${result.run_id} started successfully.`;
-    await loadSnapshot();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to start an update check.";
+    const result = await runStatus.startManualCheck();
+    if (result.kind === "started") {
+      successMessage.value = `Update check #${result.runId} started successfully.`;
+      await loadSnapshot();
+      return;
     }
-  } finally {
-    pendingRun.value = false;
+
+    if (result.kind === "already_running") {
+      successMessage.value = result.runId
+        ? `Update check #${result.runId} is already in progress.`
+        : "An update check is already in progress.";
+      await loadSnapshot();
+      return;
+    }
+
+    errorMessage.value = result.message;
+    errorRequestId.value = result.requestId;
+  } catch {
+    errorMessage.value = "Unable to start an update check.";
+    errorRequestId.value = null;
   }
 }
 
@@ -166,7 +227,7 @@ onMounted(() => {
                     </article>
                     <article class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2">
                       <p class="text-xs uppercase tracking-wide text-ink-muted">Scholars processed</p>
-                      <p class="mt-1 text-xl font-semibold text-ink-primary">{{ snapshot.latestRun?.scholar_count ?? 0 }}</p>
+                      <p class="mt-1 text-xl font-semibold text-ink-primary">{{ displayedLatestRun?.scholar_count ?? 0 }}</p>
                     </article>
                     <article class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2">
                       <p class="text-xs uppercase tracking-wide text-ink-muted">Queue pressure</p>
@@ -193,10 +254,10 @@ onMounted(() => {
                     <div class="flex items-center gap-2">
                       <AppButton
                         v-if="auth.isAdmin"
-                        :disabled="pendingRun"
+                        :disabled="runStatus.isRunActive"
                         @click="onTriggerRun"
                       >
-                        {{ pendingRun ? "Starting..." : "Start check" }}
+                        {{ startCheckLabel }}
                       </AppButton>
                       <RouterLink
                         v-if="auth.isAdmin"
@@ -209,26 +270,48 @@ onMounted(() => {
                   </div>
 
                   <div
-                    v-if="snapshot.latestRun"
+                    v-if="showRunningHint"
+                    class="rounded-xl border border-state-info-border bg-state-info-bg px-3 py-2"
+                  >
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div class="flex items-center gap-2">
+                        <RunStatusBadge status="running" />
+                        <span class="text-sm font-semibold text-state-info-text">Check in progress</span>
+                      </div>
+                      <RouterLink
+                        v-if="auth.isAdmin && activeRunId"
+                        :to="`/admin/runs/${activeRunId}`"
+                        class="link-inline text-xs"
+                      >
+                        View live check details
+                      </RouterLink>
+                    </div>
+                    <p class="mt-1 text-sm text-state-info-text">
+                      A publication check has started. Results and counts update after it finishes.
+                    </p>
+                  </div>
+
+                  <div
+                    v-if="displayedLatestRun"
                     class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2"
                   >
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div class="flex items-center gap-2">
-                        <RunStatusBadge :status="snapshot.latestRun.status" />
-                        <span class="text-sm font-semibold text-ink-primary">Latest check #{{ snapshot.latestRun.id }}</span>
+                        <RunStatusBadge :status="displayedLatestRun.status" />
+                        <span class="text-sm font-semibold text-ink-primary">Latest check #{{ displayedLatestRun.id }}</span>
                       </div>
                       <RouterLink
                         v-if="auth.isAdmin"
-                        :to="`/admin/runs/${snapshot.latestRun.id}`"
+                        :to="`/admin/runs/${displayedLatestRun.id}`"
                         class="link-inline text-xs"
                       >
                         View diagnostics
                       </RouterLink>
                     </div>
                     <p class="mt-2 text-sm text-secondary">
-                      Started {{ formatDate(snapshot.latestRun.start_dt) }}. Processed
-                      {{ snapshot.latestRun.scholar_count }} scholars and discovered
-                      {{ snapshot.latestRun.new_publication_count }} new publications.
+                      Started {{ formatDate(displayedLatestRun.start_dt) }}. Processed
+                      {{ displayedLatestRun.scholar_count }} scholars and discovered
+                      {{ displayedLatestRun.new_publication_count }} new publications.
                     </p>
                   </div>
                   <AppEmptyState
@@ -240,13 +323,13 @@ onMounted(() => {
                   <div class="flex min-h-0 flex-1 flex-col gap-2 xl:overflow-hidden">
                     <p class="text-xs font-semibold uppercase tracking-wide text-muted">Recent checks</p>
                     <AppEmptyState
-                      v-if="snapshot.recentRuns.length === 0"
+                      v-if="recentRuns.length === 0"
                       title="No checks yet"
                       body="Check history will appear here."
                     />
                     <ul v-else class="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto overscroll-contain pr-1">
                       <li
-                        v-for="run in snapshot.recentRuns"
+                        v-for="run in recentRuns"
                         :key="run.id"
                         class="grid gap-1 rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2"
                       >

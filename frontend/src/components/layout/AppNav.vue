@@ -2,11 +2,14 @@
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 
+import RunStatusBadge from "@/components/patterns/RunStatusBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { useAuthStore } from "@/stores/auth";
+import { useRunStatusStore } from "@/stores/run_status";
 import { useUserSettingsStore } from "@/stores/user_settings";
 
 const auth = useAuthStore();
+const runStatus = useRunStatusStore();
 const userSettings = useUserSettingsStore();
 const router = useRouter();
 
@@ -27,6 +30,21 @@ const links = computed(() => {
     }
     return userSettings.isPageVisible(item.id);
   });
+});
+const navRunStatus = computed(() => {
+  if (runStatus.isLikelyRunning) {
+    return "running";
+  }
+  return "idle";
+});
+const navRunText = computed(() => {
+  const label = navRunStatus.value
+    .replaceAll("_", " ")
+    .split(" ")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+  return `State: ${label}`;
 });
 
 async function onLogout(): Promise<void> {
@@ -53,7 +71,13 @@ async function onLogout(): Promise<void> {
       </nav>
 
       <div class="mt-auto grid gap-2 border-t border-stroke-subtle pt-3">
-        <p class="truncate text-xs text-ink-muted">{{ auth.user?.email }}</p>
+        <div
+          v-if="auth.isAdmin"
+          class="flex items-center justify-between gap-2 rounded-lg border border-stroke-default bg-surface-card-muted px-2.5 py-2 text-xs text-secondary"
+        >
+          <span class="truncate">{{ navRunText }}</span>
+          <RunStatusBadge :status="navRunStatus" />
+        </div>
         <AppButton variant="ghost" class="w-full justify-start" @click="onLogout">Logout</AppButton>
       </div>
     </div>

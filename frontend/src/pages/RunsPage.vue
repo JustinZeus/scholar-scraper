@@ -17,20 +17,20 @@ import {
   listQueueItems,
   listRuns,
   retryQueueItem,
-  triggerManualRun,
   type QueueItem,
   type RunListItem,
 } from "@/features/runs";
 import { ApiRequestError } from "@/lib/api/errors";
+import { useRunStatusStore } from "@/stores/run_status";
 
 const loading = ref(true);
-const pendingRun = ref(false);
 const runs = ref<RunListItem[]>([]);
 const queueItems = ref<QueueItem[]>([]);
 const errorMessage = ref<string | null>(null);
 const errorRequestId = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const activeQueueItemId = ref<number | null>(null);
+const runStatus = useRunStatusStore();
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -58,6 +58,16 @@ function queueHealth() {
 }
 
 const queueCounts = computed(() => queueHealth());
+const activeRunId = computed(() => runStatus.latestRun?.status === "running" ? runStatus.latestRun.id : null);
+const runButtonLabel = computed(() => {
+  if (runStatus.isLikelyRunning) {
+    return "Check in progress";
+  }
+  if (runStatus.isSubmitting) {
+    return "Starting...";
+  }
+  return "Run now";
+});
 
 async function loadData(): Promise<void> {
   loading.value = true;
@@ -68,6 +78,7 @@ async function loadData(): Promise<void> {
     const [loadedRuns, loadedQueue] = await Promise.all([listRuns({ limit: 100 }), listQueueItems(200)]);
     runs.value = loadedRuns;
     queueItems.value = loadedQueue;
+    runStatus.setLatestRun(loadedRuns[0] ?? null);
   } catch (error) {
     runs.value = [];
     queueItems.value = [];
@@ -83,22 +94,31 @@ async function loadData(): Promise<void> {
 }
 
 async function onTriggerManualRun(): Promise<void> {
-  pendingRun.value = true;
   successMessage.value = null;
+  errorMessage.value = null;
+  errorRequestId.value = null;
 
   try {
-    const result = await triggerManualRun();
-    successMessage.value = `Manual run queued as #${result.run_id} (${result.status}).`;
-    await loadData();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to trigger manual run.";
+    const result = await runStatus.startManualCheck();
+    if (result.kind === "started") {
+      successMessage.value = `Update check #${result.runId} started successfully.`;
+      await loadData();
+      return;
     }
-  } finally {
-    pendingRun.value = false;
+
+    if (result.kind === "already_running") {
+      successMessage.value = result.runId
+        ? `Update check #${result.runId} is already in progress.`
+        : "An update check is already in progress.";
+      await loadData();
+      return;
+    }
+
+    errorMessage.value = result.message;
+    errorRequestId.value = result.requestId;
+  } catch {
+    errorMessage.value = "Unable to start an update check.";
+    errorRequestId.value = null;
   }
 }
 
@@ -155,12 +175,22 @@ onMounted(() => {
         />
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <AppButton :disabled="pendingRun" @click="onTriggerManualRun">
-          {{ pendingRun ? "Triggering..." : "Run now" }}
+        <AppButton :disabled="runStatus.isRunActive" @click="onTriggerManualRun">
+          {{ runButtonLabel }}
         </AppButton>
         <AppButton variant="secondary" :disabled="loading" @click="loadData">
           {{ loading ? "Refreshing..." : "Refresh" }}
         </AppButton>
+      </div>
+      <div
+        v-if="runStatus.isLikelyRunning"
+        class="flex flex-wrap items-center gap-2 rounded-xl border border-state-info-border bg-state-info-bg px-3 py-2 text-sm text-state-info-text"
+      >
+        <RunStatusBadge status="running" />
+        <span class="font-medium">A publication check is currently running.</span>
+        <RouterLink v-if="activeRunId" :to="`/admin/runs/${activeRunId}`" class="link-inline text-xs">
+          View live check details
+        </RouterLink>
       </div>
     </AppCard>
 

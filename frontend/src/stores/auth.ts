@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import { ApiRequestError } from "@/lib/api/errors";
 import { fetchCsrfBootstrap } from "@/lib/api/csrf";
 import { fetchMe, loginSession, logoutSession, type SessionUser } from "@/lib/auth/session";
+import { useRunStatusStore } from "@/stores/run_status";
 import { useUiStore } from "@/stores/ui";
 import { useUserSettingsStore } from "@/stores/user_settings";
 
@@ -55,7 +56,9 @@ export const useAuthStore = defineStore("auth", {
       this.user = response.data.user;
       this.csrfToken = response.data.csrf_token;
       const userSettings = useUserSettingsStore();
+      const runStatus = useRunStatusStore();
       await userSettings.bootstrap();
+      await runStatus.bootstrap();
     },
     async logout(): Promise<void> {
       await logoutSession();
@@ -63,7 +66,9 @@ export const useAuthStore = defineStore("auth", {
       this.user = null;
       this.csrfToken = null;
       const userSettings = useUserSettingsStore();
+      const runStatus = useRunStatusStore();
       userSettings.reset();
+      runStatus.reset();
 
       try {
         const csrf = await fetchCsrfBootstrap();

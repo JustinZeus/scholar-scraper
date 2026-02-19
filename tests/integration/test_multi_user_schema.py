@@ -239,3 +239,131 @@ async def test_read_state_is_isolated_across_users(db_session: AsyncSession) -> 
     rows = result.all()
     assert rows == [(user_a, False), (user_b, True)]
 
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.schema
+@pytest.mark.asyncio
+async def test_publication_records_are_shared_across_accounts(db_session: AsyncSession) -> None:
+    user_a = await _insert_user(db_session, "shared-a@example.com")
+    user_b = await _insert_user(db_session, "shared-b@example.com")
+
+    scholar_a = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name)
+            VALUES (:user_id, :scholar_id, :display_name)
+            RETURNING id
+            """
+        ),
+        {"user_id": user_a, "scholar_id": "sharedAAA1111", "display_name": "Shared A"},
+    )
+    scholar_a_id = int(scholar_a.scalar_one())
+
+    scholar_b = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name)
+            VALUES (:user_id, :scholar_id, :display_name)
+            RETURNING id
+            """
+        ),
+        {"user_id": user_b, "scholar_id": "sharedBBB2222", "display_name": "Shared B"},
+    )
+    scholar_b_id = int(scholar_b.scalar_one())
+
+    publication = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, year)
+            VALUES (:fingerprint_sha256, :title_raw, :title_normalized, :year)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint_sha256": "a" * 64,
+            "title_raw": "Shared Record",
+            "title_normalized": "shared record",
+            "year": 2025,
+        },
+    )
+    publication_id = int(publication.scalar_one())
+
+    run_a = await db_session.execute(
+        text(
+            """
+            INSERT INTO crawl_runs (user_id, trigger_type, status)
+            VALUES (:user_id, :trigger_type, :status)
+            RETURNING id
+            """
+        ),
+        {"user_id": user_a, "trigger_type": "manual", "status": "success"},
+    )
+    run_a_id = int(run_a.scalar_one())
+
+    run_b = await db_session.execute(
+        text(
+            """
+            INSERT INTO crawl_runs (user_id, trigger_type, status)
+            VALUES (:user_id, :trigger_type, :status)
+            RETURNING id
+            """
+        ),
+        {"user_id": user_b, "trigger_type": "manual", "status": "success"},
+    )
+    run_b_id = int(run_b.scalar_one())
+
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read, first_seen_run_id)
+            VALUES (:scholar_profile_id, :publication_id, :is_read, :first_seen_run_id)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_a_id,
+            "publication_id": publication_id,
+            "is_read": False,
+            "first_seen_run_id": run_a_id,
+        },
+    )
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read, first_seen_run_id)
+            VALUES (:scholar_profile_id, :publication_id, :is_read, :first_seen_run_id)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_b_id,
+            "publication_id": publication_id,
+            "is_read": False,
+            "first_seen_run_id": run_b_id,
+        },
+    )
+    await db_session.commit()
+
+    publication_row_count = await db_session.execute(
+        text("SELECT COUNT(*) FROM publications WHERE id = :publication_id"),
+        {"publication_id": publication_id},
+    )
+    assert int(publication_row_count.scalar_one()) == 1
+
+    link_count = await db_session.execute(
+        text("SELECT COUNT(*) FROM scholar_publications WHERE publication_id = :publication_id"),
+        {"publication_id": publication_id},
+    )
+    assert int(link_count.scalar_one()) == 2
+
+    owner_count = await db_session.execute(
+        text(
+            """
+            SELECT COUNT(DISTINCT sp.user_id)
+            FROM scholar_publications spp
+            JOIN scholar_profiles sp ON sp.id = spp.scholar_profile_id
+            WHERE spp.publication_id = :publication_id
+            """
+        ),
+        {"publication_id": publication_id},
+    )
+    assert int(owner_count.scalar_one()) == 2

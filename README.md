@@ -72,6 +72,17 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 - `CONTRIBUTING.md`: contribution policy and merge checklist.
 - `scripts/check_no_generated_artifacts.sh`: tracked-artifact guard used by CI.
 
+## Data Model Notes
+
+- Scholar tracking is user-scoped: each account can track the same Scholar ID independently.
+- Publications are shared/global records deduplicated by Scholar cluster ID and normalized fingerprint.
+- Per-account visibility and read state is stored on scholar-publication links, not on the global publication row.
+
+## Name Search Status
+
+- Scholar name search is intentionally WIP in the UI.
+- Current Google Scholar behavior often redirects name-search traffic to login/challenge flows, so production onboarding should use direct Scholar ID/profile URL adds.
+
 ## Environment Variables (Complete Reference)
 
 Notes:

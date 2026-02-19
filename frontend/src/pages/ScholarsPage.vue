@@ -11,6 +11,7 @@ import AppCard from "@/components/ui/AppCard.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppInput from "@/components/ui/AppInput.vue";
 import AppModal from "@/components/ui/AppModal.vue";
+import AppSelect from "@/components/ui/AppSelect.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import {
   clearScholarImage,
@@ -42,6 +43,9 @@ const imageUrlDraftByScholarId = ref<Record<number, string>>({});
 
 const scholarBatchInput = ref("");
 const searchQuery = ref("");
+const trackedFilterQuery = ref("");
+type TrackedScholarSort = "recent" | "name_asc" | "name_desc" | "enabled_first";
+const trackedSort = ref<TrackedScholarSort>("recent");
 const searchResult = ref<ScholarSearchResult | null>(null);
 const searchErrorMessage = ref<string | null>(null);
 const searchErrorRequestId = ref<string | null>(null);
@@ -58,6 +62,7 @@ const trackedScholarIds = computed(() => new Set(scholars.value.map((item) => it
 const activeScholarSettings = computed(
   () => scholars.value.find((item) => item.id === activeScholarSettingsId.value) ?? null,
 );
+const hasTrackedScholars = computed(() => scholars.value.length > 0);
 const parsedBatchCount = computed(() => parseScholarIds(scholarBatchInput.value).length);
 const searchHasRun = computed(() => searchResult.value !== null);
 const searchIsDegraded = computed(() => {
@@ -85,6 +90,50 @@ const emptySearchCandidates = computed(() => {
     return false;
   }
   return result.candidates.length === 0;
+});
+const normalizedTrackedFilter = computed(() => trackedFilterQuery.value.trim().toLocaleLowerCase());
+const visibleScholars = computed(() => {
+  const filter = normalizedTrackedFilter.value;
+  const filtered = scholars.value.filter((item) => {
+    if (!filter) {
+      return true;
+    }
+    const label = scholarLabel(item).toLocaleLowerCase();
+    const scholarId = item.scholar_id.toLocaleLowerCase();
+    return label.includes(filter) || scholarId.includes(filter);
+  });
+
+  const byName = (a: ScholarProfile, b: ScholarProfile) =>
+    scholarLabel(a).localeCompare(scholarLabel(b), undefined, { sensitivity: "base" });
+
+  const sorted = [...filtered];
+  if (trackedSort.value === "name_asc") {
+    sorted.sort(byName);
+    return sorted;
+  }
+  if (trackedSort.value === "name_desc") {
+    sorted.sort((a, b) => byName(b, a));
+    return sorted;
+  }
+  if (trackedSort.value === "enabled_first") {
+    sorted.sort((a, b) => {
+      if (a.is_enabled !== b.is_enabled) {
+        return a.is_enabled ? -1 : 1;
+      }
+      return byName(a, b);
+    });
+    return sorted;
+  }
+
+  sorted.sort((a, b) => b.id - a.id);
+  return sorted;
+});
+const hasVisibleScholars = computed(() => visibleScholars.value.length > 0);
+const trackedCountLabel = computed(() => {
+  if (!normalizedTrackedFilter.value) {
+    return `${scholars.value.length} tracked`;
+  }
+  return `${visibleScholars.value.length} of ${scholars.value.length}`;
 });
 
 function scholarProfileUrl(scholarId: string): string {
@@ -464,251 +513,254 @@ onMounted(() => {
   <AppPage
     title="Scholars"
     subtitle="Add and maintain the Google Scholar profiles you want Scholarr to monitor."
+    fill
   >
-    <RequestStateAlerts
-      :success-message="successMessage"
-      success-title="Scholar update complete"
-      :error-message="errorMessage"
-      :error-request-id="errorRequestId"
-      error-title="Scholar request failed"
-      @dismiss-success="successMessage = null"
-    />
+    <div class="flex min-h-0 flex-1 flex-col gap-4 xl:overflow-hidden">
+      <RequestStateAlerts
+        :success-message="successMessage"
+        success-title="Scholar update complete"
+        :error-message="errorMessage"
+        :error-request-id="errorRequestId"
+        error-title="Scholar request failed"
+        @dismiss-success="successMessage = null"
+      />
 
-    <section class="grid gap-4 xl:grid-cols-2">
-      <div class="grid content-start gap-4">
-        <AppCard class="space-y-4">
-          <div class="space-y-1">
-            <div class="flex items-center gap-1">
-              <h2 class="text-lg font-semibold text-ink-primary">Add Scholar Profiles</h2>
-              <AppHelpHint
-                text="A scholar profile is a Google Scholar author page that Scholarr will monitor for publication changes."
-              />
-            </div>
-            <p class="text-sm text-secondary">Paste one or more Scholar IDs or profile URLs and add them in one action.</p>
-          </div>
-
-          <form class="grid gap-3" @submit.prevent="onAddScholars">
-            <label class="grid gap-2 text-sm font-medium text-ink-secondary" for="scholar-batch-input">
-              <span>Scholar IDs or profile URLs</span>
-              <textarea
-                id="scholar-batch-input"
-                v-model="scholarBatchInput"
-                rows="5"
-                placeholder="A-UbBTPM15wL\nhttps://scholar.google.com/citations?hl=en&user=A-UbBTPM15wL"
-                class="w-full rounded-lg border border-stroke-interactive bg-surface-input px-3 py-2 text-sm text-ink-primary outline-none ring-focus-ring transition placeholder:text-ink-muted focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset disabled:cursor-not-allowed disabled:opacity-60"
-              />
-            </label>
-
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <p class="text-xs text-secondary">
-                Parsed IDs: <strong class="text-ink-primary">{{ parsedBatchCount }}</strong>
-              </p>
-              <AppButton type="submit" :disabled="saving || loading">
-                {{ saving ? "Adding..." : "Add scholars" }}
-              </AppButton>
-            </div>
-          </form>
-        </AppCard>
-
-        <AppCard class="relative space-y-4 select-none">
-          <div class="flex flex-wrap items-start justify-between gap-2">
+      <section class="grid min-h-0 flex-1 gap-4 xl:h-full xl:grid-cols-2 xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden">
+        <div class="grid content-start gap-4 xl:order-2 xl:h-full xl:min-h-0 xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
+          <AppCard class="space-y-4 xl:flex xl:min-h-0 xl:flex-col">
             <div class="space-y-1">
               <div class="flex items-center gap-1">
-                <h2 class="text-lg font-semibold text-ink-primary">Search by Name</h2>
-                <AppHelpHint text="This workflow is currently paused while anti-block reliability changes are finalized." />
+                <h2 class="text-lg font-semibold text-ink-primary">Add Scholar Profiles</h2>
+                <AppHelpHint
+                  text="A scholar profile is a Google Scholar author page that Scholarr will monitor for publication changes."
+                />
               </div>
-              <p class="text-sm text-secondary">This helper is paused while reliability hardening is completed.</p>
+              <p class="text-sm text-secondary">Paste one or more Scholar IDs or profile URLs and add them in one action.</p>
             </div>
-            <AppHelpHint text="Name search is not currently supported in production. It is on the roadmap and will return after reliability hardening.">
-              <template #trigger>
-                <AppBadge tone="warning">WIP</AppBadge>
-              </template>
-            </AppHelpHint>
+
+            <form class="grid gap-3" @submit.prevent="onAddScholars">
+              <label class="grid gap-2 text-sm font-medium text-ink-secondary" for="scholar-batch-input">
+                <span>Scholar IDs or profile URLs</span>
+                <textarea
+                  id="scholar-batch-input"
+                  v-model="scholarBatchInput"
+                  rows="5"
+                  placeholder="A-UbBTPM15wL\nhttps://scholar.google.com/citations?hl=en&user=A-UbBTPM15wL"
+                  class="w-full rounded-lg border border-stroke-interactive bg-surface-input px-3 py-2 text-sm text-ink-primary outline-none ring-focus-ring transition placeholder:text-ink-muted focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </label>
+
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="text-xs text-secondary">
+                  Parsed IDs: <strong class="text-ink-primary">{{ parsedBatchCount }}</strong>
+                </p>
+                <AppButton type="submit" :disabled="saving || loading">
+                  {{ saving ? "Adding..." : "Add scholars" }}
+                </AppButton>
+              </div>
+            </form>
+          </AppCard>
+
+          <AppCard class="relative space-y-4 select-none xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div class="space-y-1">
+                <div class="flex items-center gap-1">
+                  <h2 class="text-lg font-semibold text-ink-primary">Search by Name</h2>
+                  <AppHelpHint text="Google Scholar now challenges this endpoint with account login and anti-bot checks, so this workflow stays disabled." />
+                </div>
+                <p class="text-sm text-secondary">
+                  This helper remains paused because Google Scholar currently requires account login for reliable name search access.
+                </p>
+              </div>
+              <AppHelpHint text="Name search is kept as WIP. Use direct Scholar ID or profile URL adds for production tracking.">
+                <template #trigger>
+                  <AppBadge tone="warning">WIP</AppBadge>
+                </template>
+              </AppHelpHint>
+            </div>
+
+            <form class="pointer-events-none flex flex-wrap items-center gap-2 opacity-60">
+              <div class="min-w-0 flex-1">
+                <AppInput
+                  id="scholar-search-name"
+                  v-model="searchQuery"
+                  placeholder="e.g. Geoffrey Hinton"
+                  :disabled="nameSearchWip"
+                />
+              </div>
+              <AppButton type="button" :disabled="nameSearchWip">
+                Search
+              </AppButton>
+            </form>
+            <p class="text-xs text-secondary">
+              Direct Scholar ID/URL adds above are the supported path until name search can run without login challenges.
+            </p>
+
+            <div class="min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1">
+              <RequestStateAlerts
+                :error-message="searchErrorMessage"
+                :error-request-id="searchErrorRequestId"
+                error-title="Search request failed"
+              />
+
+              <AsyncStateGate :loading="searchingByName" :loading-lines="4" :show-empty="false">
+                <template v-if="searchResult">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <p class="text-sm text-secondary">
+                      {{ searchResult.candidates.length }} candidate{{ searchResult.candidates.length === 1 ? "" : "s" }}
+                      for <strong class="text-ink-primary">{{ searchResult.query }}</strong>
+                    </p>
+                    <AppBadge :tone="searchStateTone">{{ searchResult.state }}</AppBadge>
+                  </div>
+
+                  <p v-if="searchResult.state !== 'ok' || searchResult.warnings.length > 0" class="text-xs text-secondary">
+                    <span>State reason: <code>{{ searchResult.state_reason }}</code></span>
+                    <span v-if="searchResult.action_hint">. {{ searchResult.action_hint }}</span>
+                    <span v-if="searchResult.warnings.length > 0">. Warnings: {{ searchResult.warnings.join(", ") }}</span>
+                  </p>
+
+                  <AppAlert v-if="searchIsDegraded" tone="warning">
+                    <template #title>Name search is degraded</template>
+                    <p>
+                      This endpoint throttles aggressively to avoid blocks. Use Scholar URL/ID adds for dependable tracking.
+                    </p>
+                  </AppAlert>
+
+                  <AsyncStateGate
+                    :loading="false"
+                    :show-empty="true"
+                    :empty="emptySearchCandidates"
+                    empty-title="No scholar matches returned"
+                    empty-body="Try another query later or add directly by Scholar URL/ID."
+                  >
+                    <ul class="grid gap-3">
+                      <li
+                        v-for="candidate in searchResult.candidates"
+                        :key="candidate.scholar_id"
+                        class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3"
+                      >
+                        <div class="flex items-start gap-3">
+                          <ScholarAvatar
+                            size="sm"
+                            :label="candidate.display_name"
+                            :scholar-id="candidate.scholar_id"
+                            :image-url="candidate.profile_image_url"
+                          />
+
+                          <div class="min-w-0 flex-1 space-y-1">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <strong class="text-sm text-ink-primary">{{ candidate.display_name }}</strong>
+                              <code class="text-xs text-secondary">{{ candidate.scholar_id }}</code>
+                              <AppBadge v-if="trackedScholarIds.has(candidate.scholar_id)" tone="success">Tracked</AppBadge>
+                            </div>
+
+                            <p class="truncate text-xs text-secondary">{{ candidate.affiliation || "No affiliation provided" }}</p>
+
+                            <div class="flex flex-wrap items-center gap-2 text-xs text-secondary">
+                              <span v-if="candidate.email_domain">Email: {{ candidate.email_domain }}</span>
+                              <span v-if="candidate.cited_by_count !== null">Cited by: {{ candidate.cited_by_count }}</span>
+                            </div>
+                          </div>
+
+                          <div class="grid shrink-0 gap-2">
+                            <AppButton
+                              :disabled="trackedScholarIds.has(candidate.scholar_id) || addingCandidateScholarId === candidate.scholar_id"
+                              @click="onAddCandidate(candidate)"
+                            >
+                              {{ addingCandidateScholarId === candidate.scholar_id ? "Adding..." : "Add" }}
+                            </AppButton>
+                            <a :href="candidate.profile_url" target="_blank" rel="noreferrer" class="link-inline text-xs text-center">
+                              Open profile
+                            </a>
+                          </div>
+                        </div>
+                      </li>
+                    </ul>
+                  </AsyncStateGate>
+                </template>
+                <p v-else-if="!searchErrorMessage && !searchHasRun" class="text-sm text-secondary">
+                  Name search remains disabled while login-gated responses are unresolved.
+                </p>
+              </AsyncStateGate>
+            </div>
+          </AppCard>
+        </div>
+
+        <AppCard class="flex min-h-0 flex-col gap-4 xl:order-1 xl:h-full xl:overflow-hidden">
+          <div class="space-y-3">
+            <div class="space-y-1">
+              <div class="flex items-center gap-1">
+                <h2 class="text-lg font-semibold text-ink-primary">Tracked Scholars</h2>
+                <AppHelpHint
+                  text="Tracked scholars are active profile sources. Open Manage to control status, image overrides, and removal."
+                />
+              </div>
+              <p class="text-sm text-secondary">Review tracked profiles, filter quickly, and open per-scholar settings when needed.</p>
+            </div>
+            <div class="grid gap-3 rounded-xl border border-stroke-default bg-surface-card-muted/70 px-3 py-2">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <p class="text-xs font-medium uppercase tracking-wide text-secondary">Tracking status</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span
+                    class="inline-flex min-h-10 items-center rounded-lg border border-state-info-border bg-state-info-bg px-3 text-sm font-semibold text-state-info-text"
+                  >
+                    {{ trackedCountLabel }}
+                  </span>
+                  <AppButton variant="secondary" :disabled="loading || saving" @click="loadScholars">
+                    {{ loading ? "Refreshing..." : "Refresh" }}
+                  </AppButton>
+                </div>
+              </div>
+
+              <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                <label class="grid gap-1 text-xs font-medium uppercase tracking-wide text-secondary" for="tracked-scholar-filter">
+                  <span>Filter tracked scholars</span>
+                  <AppInput
+                    id="tracked-scholar-filter"
+                    v-model="trackedFilterQuery"
+                    placeholder="Filter by name or scholar ID"
+                  />
+                </label>
+                <label class="grid gap-1 text-xs font-medium uppercase tracking-wide text-secondary" for="tracked-scholar-sort">
+                  <span>Sort</span>
+                  <AppSelect id="tracked-scholar-sort" v-model="trackedSort">
+                    <option value="recent">Recently added</option>
+                    <option value="name_asc">Name (A-Z)</option>
+                    <option value="name_desc">Name (Z-A)</option>
+                    <option value="enabled_first">Enabled first</option>
+                  </AppSelect>
+                </label>
+              </div>
+            </div>
           </div>
 
-          <form class="pointer-events-none flex flex-wrap items-center gap-2 opacity-60">
-            <div class="min-w-0 flex-1">
-              <AppInput
-                id="scholar-search-name"
-                v-model="searchQuery"
-                placeholder="e.g. Geoffrey Hinton"
-                :disabled="nameSearchWip"
+          <div class="min-h-0 flex-1 xl:overflow-hidden">
+            <AsyncStateGate
+              :loading="loading"
+              :loading-lines="6"
+              :empty="!hasTrackedScholars"
+              :show-empty="!errorMessage"
+              empty-title="No scholars tracked"
+              empty-body="Add a Scholar ID or URL to start ingestion tracking."
+            >
+              <AppEmptyState
+                v-if="!hasVisibleScholars"
+                title="No scholars match this filter"
+                body="Clear or adjust the filter to see tracked scholars."
               />
-            </div>
-            <AppButton type="button" :disabled="nameSearchWip">
-              Search
-            </AppButton>
-          </form>
-          <p class="text-xs text-secondary">
-            Direct Scholar ID/URL adds above remain the dependable path while this feature is in progress.
-          </p>
 
-          <RequestStateAlerts
-            :error-message="searchErrorMessage"
-            :error-request-id="searchErrorRequestId"
-            error-title="Search request failed"
-          />
-
-          <AsyncStateGate :loading="searchingByName" :loading-lines="4" :show-empty="false">
-            <template v-if="searchResult">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <p class="text-sm text-secondary">
-                  {{ searchResult.candidates.length }} candidate{{ searchResult.candidates.length === 1 ? "" : "s" }}
-                  for <strong class="text-ink-primary">{{ searchResult.query }}</strong>
-                </p>
-                <AppBadge :tone="searchStateTone">{{ searchResult.state }}</AppBadge>
-              </div>
-
-              <p v-if="searchResult.state !== 'ok' || searchResult.warnings.length > 0" class="text-xs text-secondary">
-                <span>State reason: <code>{{ searchResult.state_reason }}</code></span>
-                <span v-if="searchResult.action_hint">. {{ searchResult.action_hint }}</span>
-                <span v-if="searchResult.warnings.length > 0">. Warnings: {{ searchResult.warnings.join(", ") }}</span>
-              </p>
-
-              <AppAlert v-if="searchIsDegraded" tone="warning">
-                <template #title>Name search is degraded</template>
-                <p>
-                  This endpoint throttles aggressively to avoid blocks. Use Scholar URL/ID adds for dependable tracking.
-                </p>
-              </AppAlert>
-
-              <AsyncStateGate
-                :loading="false"
-                :show-empty="true"
-                :empty="emptySearchCandidates"
-                empty-title="No scholar matches returned"
-                empty-body="Try another query later or add directly by Scholar URL/ID."
-              >
-                <ul class="grid gap-3">
+              <div v-else class="space-y-3 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:space-y-0">
+                <ul class="grid gap-3 lg:hidden">
                   <li
-                    v-for="candidate in searchResult.candidates"
-                    :key="candidate.scholar_id"
+                    v-for="item in visibleScholars"
+                    :key="item.id"
                     class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3"
                   >
                     <div class="flex items-start gap-3">
-                      <ScholarAvatar
-                        size="sm"
-                        :label="candidate.display_name"
-                        :scholar-id="candidate.scholar_id"
-                        :image-url="candidate.profile_image_url"
-                      />
-
-                      <div class="min-w-0 flex-1 space-y-1">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <strong class="text-sm text-ink-primary">{{ candidate.display_name }}</strong>
-                          <code class="text-xs text-secondary">{{ candidate.scholar_id }}</code>
-                          <AppBadge v-if="trackedScholarIds.has(candidate.scholar_id)" tone="success">Tracked</AppBadge>
-                        </div>
-
-                        <p class="truncate text-xs text-secondary">{{ candidate.affiliation || "No affiliation provided" }}</p>
-
-                        <div class="flex flex-wrap items-center gap-2 text-xs text-secondary">
-                          <span v-if="candidate.email_domain">Email: {{ candidate.email_domain }}</span>
-                          <span v-if="candidate.cited_by_count !== null">Cited by: {{ candidate.cited_by_count }}</span>
-                        </div>
-                      </div>
-
-                      <div class="grid shrink-0 gap-2">
-                        <AppButton
-                          :disabled="trackedScholarIds.has(candidate.scholar_id) || addingCandidateScholarId === candidate.scholar_id"
-                          @click="onAddCandidate(candidate)"
-                        >
-                          {{ addingCandidateScholarId === candidate.scholar_id ? "Adding..." : "Add" }}
-                        </AppButton>
-                        <a :href="candidate.profile_url" target="_blank" rel="noreferrer" class="link-inline text-xs text-center">
-                          Open profile
-                        </a>
-                      </div>
-                    </div>
-                  </li>
-                </ul>
-              </AsyncStateGate>
-            </template>
-            <p v-else-if="!searchErrorMessage && !searchHasRun" class="text-sm text-secondary">
-              Run a name search to get candidates with one-click add actions.
-            </p>
-          </AsyncStateGate>
-        </AppCard>
-      </div>
-
-      <AppCard class="space-y-4">
-        <div class="space-y-3">
-          <div class="space-y-1">
-            <div class="flex items-center gap-1">
-              <h2 class="text-lg font-semibold text-ink-primary">Tracked Scholars</h2>
-              <AppHelpHint
-                text="Tracked scholars are active profile sources. Open Manage to control status, image overrides, and removal."
-              />
-            </div>
-            <p class="text-sm text-secondary">Review tracked profiles and open per-scholar settings when needed.</p>
-          </div>
-          <div
-            class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stroke-default bg-surface-card-muted/70 px-3 py-2"
-          >
-            <p class="text-xs font-medium uppercase tracking-wide text-secondary">Tracking status</p>
-            <div class="flex flex-wrap items-center gap-2">
-              <span
-                class="inline-flex min-h-10 items-center rounded-lg border border-state-info-border bg-state-info-bg px-3 text-sm font-semibold text-state-info-text"
-              >
-                {{ scholars.length }} tracked
-              </span>
-              <AppButton variant="secondary" :disabled="loading || saving" @click="loadScholars">
-                {{ loading ? "Refreshing..." : "Refresh" }}
-              </AppButton>
-            </div>
-          </div>
-        </div>
-
-        <AsyncStateGate
-          :loading="loading"
-          :loading-lines="6"
-          :empty="scholars.length === 0"
-          :show-empty="!errorMessage"
-          empty-title="No scholars tracked"
-          empty-body="Add a Scholar ID or URL to start ingestion tracking."
-        >
-          <div class="space-y-3">
-            <ul class="grid gap-3 lg:hidden">
-              <li
-                v-for="item in scholars"
-                :key="item.id"
-                class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3"
-              >
-                <div class="flex items-start gap-3">
-                  <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
-
-                  <div class="min-w-0 flex-1 space-y-1">
-                    <p class="truncate text-sm font-semibold text-ink-primary">{{ scholarLabel(item) }}</p>
-                    <div class="flex flex-wrap items-center gap-3">
-                      <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
-                        Publications
-                      </RouterLink>
-                      <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">
-                        Open profile
-                      </a>
-                    </div>
-                  </div>
-
-                  <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
-                </div>
-              </li>
-            </ul>
-
-            <AppTable class="hidden lg:block" label="Tracked scholars table">
-              <thead>
-                <tr>
-                  <th scope="col">Scholar</th>
-                  <th scope="col" class="w-[11rem]">Manage</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in scholars" :key="item.id">
-                  <td>
-                    <div class="flex items-start gap-3">
                       <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
 
-                      <div class="grid min-w-0 gap-1">
-                        <strong class="truncate text-ink-primary">{{ scholarLabel(item) }}</strong>
+                      <div class="min-w-0 flex-1 space-y-1">
+                        <p class="truncate text-sm font-semibold text-ink-primary">{{ scholarLabel(item) }}</p>
                         <div class="flex flex-wrap items-center gap-3">
                           <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
                             Publications
@@ -718,18 +770,52 @@ onMounted(() => {
                           </a>
                         </div>
                       </div>
+
+                      <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
                     </div>
-                  </td>
-                  <td>
-                    <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
-                  </td>
-                </tr>
-              </tbody>
-            </AppTable>
+                  </li>
+                </ul>
+
+                <div class="hidden min-h-0 flex-1 lg:block">
+                  <AppTable class="max-h-full overflow-y-auto" label="Tracked scholars table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Scholar</th>
+                        <th scope="col" class="w-[11rem]">Manage</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="item in visibleScholars" :key="item.id">
+                        <td>
+                          <div class="flex items-start gap-3">
+                            <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
+
+                            <div class="grid min-w-0 gap-1">
+                              <strong class="truncate text-ink-primary">{{ scholarLabel(item) }}</strong>
+                              <div class="flex flex-wrap items-center gap-3">
+                                <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
+                                  Publications
+                                </RouterLink>
+                                <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">
+                                  Open profile
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </AppTable>
+                </div>
+              </div>
+            </AsyncStateGate>
           </div>
-        </AsyncStateGate>
-      </AppCard>
-    </section>
+        </AppCard>
+      </section>
+    </div>
 
     <AppModal :open="activeScholarSettings !== null" title="Scholar settings" @close="closeScholarSettings">
       <div v-if="activeScholarSettings" class="grid gap-4">
