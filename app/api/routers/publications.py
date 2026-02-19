@@ -94,6 +94,7 @@ async def list_publications(
                     "citation_count": item.citation_count,
                     "venue_text": item.venue_text,
                     "pub_url": item.pub_url,
+                    "pdf_url": item.pdf_url,
                     "is_read": item.is_read,
                     "first_seen_at": item.first_seen_at,
                     "is_new_in_latest_run": item.is_new_in_latest_run,

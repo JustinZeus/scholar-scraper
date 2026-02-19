@@ -98,6 +98,74 @@ def test_parse_profile_page_handles_missing_optional_metadata() -> None:
     assert publication.venue_text is None
 
 
+def test_parse_profile_page_extracts_direct_pdf_link() -> None:
+    html = """
+    <html>
+      <div id="gsc_prf_in">Direct PDF Test</div>
+      <span id="gsc_a_nn">Articles 1-1</span>
+      <table>
+        <tbody id="gsc_a_b">
+          <tr class="gsc_a_tr">
+            <td class="gsc_a_t">
+              <a class="gsc_a_at" href="/citations?view_op=view_citation&citation_for_view=abc:def999">Paper</a>
+              <div class="gs_ggs gs_fl">
+                <a href="https://example.org/paper.pdf">[PDF]</a>
+              </div>
+            </td>
+            <td class="gsc_a_c"><a class="gsc_a_ac">3</a></td>
+            <td class="gsc_a_y"><span class="gsc_a_h">2025</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </html>
+    """
+    fetch_result = FetchResult(
+        requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+        status_code=200,
+        final_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+        body=html,
+        error=None,
+    )
+
+    parsed = parse_profile_page(fetch_result)
+
+    assert parsed.state == ParseState.OK
+    assert len(parsed.publications) == 1
+    assert parsed.publications[0].pdf_url == "https://example.org/paper.pdf"
+
+
+def test_parse_profile_page_fails_fast_when_citation_markup_is_unparseable() -> None:
+    html = """
+    <html>
+      <div id="gsc_prf_in">Citation Parse Drift</div>
+      <span id="gsc_a_nn">Articles 1-1</span>
+      <table>
+        <tbody id="gsc_a_b">
+          <tr class="gsc_a_tr">
+            <td class="gsc_a_t">
+              <a class="gsc_a_at" href="/citations?view_op=view_citation&citation_for_view=abc:def777">Paper</a>
+            </td>
+            <td class="gsc_a_c"><a class="gsc_a_ac">Cited by none</a></td>
+            <td class="gsc_a_y"><span class="gsc_a_h">2025</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </html>
+    """
+    fetch_result = FetchResult(
+        requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+        status_code=200,
+        final_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+        body=html,
+        error=None,
+    )
+
+    parsed = parse_profile_page(fetch_result)
+
+    assert parsed.state == ParseState.LAYOUT_CHANGED
+    assert parsed.state_reason == "layout_row_citation_unparseable"
+
+
 def test_parse_profile_page_detects_layout_change_when_markers_absent() -> None:
     fetch_result = FetchResult(
         requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",

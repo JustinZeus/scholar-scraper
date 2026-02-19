@@ -41,6 +41,70 @@ def compute_backoff_seconds(*, base_seconds: int, attempt_count: int, max_second
     return min(seconds, maximum)
 
 
+async def _get_item_for_user_scholar(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_profile_id: int,
+) -> IngestionQueueItem | None:
+    result = await db_session.execute(
+        select(IngestionQueueItem).where(
+            IngestionQueueItem.user_id == user_id,
+            IngestionQueueItem.scholar_profile_id == scholar_profile_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _build_queue_item(
+    *,
+    now: datetime,
+    user_id: int,
+    scholar_profile_id: int,
+    normalized_cstart: int,
+    reason: str,
+    run_id: int | None,
+    next_attempt_dt: datetime,
+) -> IngestionQueueItem:
+    return IngestionQueueItem(
+        user_id=user_id,
+        scholar_profile_id=scholar_profile_id,
+        resume_cstart=normalized_cstart,
+        reason=reason,
+        status=QueueItemStatus.QUEUED.value,
+        attempt_count=0,
+        next_attempt_dt=next_attempt_dt,
+        last_run_id=run_id,
+        last_error=None,
+        dropped_reason=None,
+        dropped_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _update_existing_queue_item(
+    *,
+    item: IngestionQueueItem,
+    now: datetime,
+    normalized_cstart: int,
+    reason: str,
+    run_id: int | None,
+    next_attempt_dt: datetime,
+) -> None:
+    item.resume_cstart = normalized_cstart
+    item.reason = reason
+    if item.status == QueueItemStatus.DROPPED.value:
+        item.attempt_count = 0
+    item.status = QueueItemStatus.QUEUED.value
+    item.next_attempt_dt = next_attempt_dt
+    item.last_run_id = run_id
+    item.last_error = None
+    item.dropped_reason = None
+    item.dropped_at = None
+    item.updated_at = now
+
+
 async def upsert_job(
     db_session: AsyncSession,
     *,
@@ -53,44 +117,33 @@ async def upsert_job(
 ) -> IngestionQueueItem:
     now = datetime.now(timezone.utc)
     next_attempt_dt = now + timedelta(seconds=max(0, int(delay_seconds)))
-    result = await db_session.execute(
-        select(IngestionQueueItem).where(
-            IngestionQueueItem.user_id == user_id,
-            IngestionQueueItem.scholar_profile_id == scholar_profile_id,
-        )
+    item = await _get_item_for_user_scholar(
+        db_session,
+        user_id=user_id,
+        scholar_profile_id=scholar_profile_id,
     )
-    item = result.scalar_one_or_none()
     normalized_cstart = normalize_cstart(resume_cstart)
     if item is None:
-        item = IngestionQueueItem(
+        item = _build_queue_item(
+            now=now,
             user_id=user_id,
             scholar_profile_id=scholar_profile_id,
-            resume_cstart=normalized_cstart,
+            normalized_cstart=normalized_cstart,
             reason=reason,
-            status=QueueItemStatus.QUEUED.value,
-            attempt_count=0,
+            run_id=run_id,
             next_attempt_dt=next_attempt_dt,
-            last_run_id=run_id,
-            last_error=None,
-            dropped_reason=None,
-            dropped_at=None,
-            created_at=now,
-            updated_at=now,
         )
         db_session.add(item)
         return item
 
-    item.resume_cstart = normalized_cstart
-    item.reason = reason
-    if item.status == QueueItemStatus.DROPPED.value:
-        item.attempt_count = 0
-    item.status = QueueItemStatus.QUEUED.value
-    item.next_attempt_dt = next_attempt_dt
-    item.last_run_id = run_id
-    item.last_error = None
-    item.dropped_reason = None
-    item.dropped_at = None
-    item.updated_at = now
+    _update_existing_queue_item(
+        item=item,
+        now=now,
+        normalized_cstart=normalized_cstart,
+        reason=reason,
+        run_id=run_id,
+        next_attempt_dt=next_attempt_dt,
+    )
     return item
 
 

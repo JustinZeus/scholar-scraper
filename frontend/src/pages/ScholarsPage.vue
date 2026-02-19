@@ -17,11 +17,15 @@ import {
   clearScholarImage,
   createScholar,
   deleteScholar,
+  exportScholarData,
+  importScholarData,
   listScholars,
   searchScholarsByName,
   setScholarImageUrl,
   toggleScholar,
   uploadScholarImage,
+  type DataImportPayload,
+  type DataImportResult,
   type ScholarProfile,
   type ScholarSearchCandidate,
   type ScholarSearchResult,
@@ -37,6 +41,9 @@ const imageSavingScholarId = ref<number | null>(null);
 const imageUploadingScholarId = ref<number | null>(null);
 const addingCandidateScholarId = ref<string | null>(null);
 const activeScholarSettingsId = ref<number | null>(null);
+const importingData = ref(false);
+const exportingData = ref(false);
+const importFileInput = ref<HTMLInputElement | null>(null);
 
 const scholars = ref<ScholarProfile[]>([]);
 const imageUrlDraftByScholarId = ref<Record<number, string>>({});
@@ -197,6 +204,30 @@ function scholarLabel(profile: ScholarProfile): string {
   return profile.display_name || profile.scholar_id;
 }
 
+function suggestExportFilename(exportedAt: string): string {
+  const date = exportedAt.slice(0, 10) || "unknown-date";
+  return `scholarr-export-${date}.json`;
+}
+
+function downloadJsonFile(filename: string, payload: unknown): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function importSummary(result: DataImportResult): string {
+  return (
+    `Import complete. Scholars +${result.scholars_created}` +
+    ` / updated ${result.scholars_updated}; publications +${result.publications_created}` +
+    ` / updated ${result.publications_updated}; links +${result.links_created}` +
+    ` / updated ${result.links_updated}; skipped ${result.skipped_records}.`
+  );
+}
+
 function isImageBusy(scholarProfileId: number): boolean {
   return (
     imageSavingScholarId.value === scholarProfileId ||
@@ -243,6 +274,74 @@ async function loadScholars(): Promise<void> {
     }
   } finally {
     loading.value = false;
+  }
+}
+
+async function onExportData(): Promise<void> {
+  exportingData.value = true;
+  errorMessage.value = null;
+  errorRequestId.value = null;
+  successMessage.value = null;
+
+  try {
+    const payload = await exportScholarData();
+    downloadJsonFile(suggestExportFilename(payload.exported_at), payload);
+    successMessage.value = "Export complete.";
+  } catch (error) {
+    if (error instanceof ApiRequestError) {
+      errorMessage.value = error.message;
+      errorRequestId.value = error.requestId;
+    } else {
+      errorMessage.value = "Unable to export scholars and publications.";
+    }
+  } finally {
+    exportingData.value = false;
+  }
+}
+
+function onOpenImportPicker(): void {
+  importFileInput.value?.click();
+}
+
+function parseImportedJson(raw: string): DataImportPayload {
+  const parsed = JSON.parse(raw) as DataImportPayload;
+  if (!parsed || !Array.isArray(parsed.scholars) || !Array.isArray(parsed.publications)) {
+    throw new Error("Invalid import file: expected scholars[] and publications[] arrays.");
+  }
+  return parsed;
+}
+
+async function onImportFileSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0] ?? null;
+  if (!file) {
+    return;
+  }
+
+  importingData.value = true;
+  errorMessage.value = null;
+  errorRequestId.value = null;
+  successMessage.value = null;
+
+  try {
+    const payload = parseImportedJson(await file.text());
+    const result = await importScholarData(payload);
+    successMessage.value = importSummary(result);
+    await loadScholars();
+  } catch (error) {
+    if (error instanceof ApiRequestError) {
+      errorMessage.value = error.message;
+      errorRequestId.value = error.requestId;
+    } else if (error instanceof Error) {
+      errorMessage.value = error.message;
+    } else {
+      errorMessage.value = "Unable to import scholars and publications.";
+    }
+  } finally {
+    importingData.value = false;
+    if (input) {
+      input.value = "";
+    }
   }
 }
 
@@ -706,11 +805,24 @@ onMounted(() => {
                   >
                     {{ trackedCountLabel }}
                   </span>
+                  <AppButton variant="secondary" :disabled="loading || exportingData" @click="onExportData">
+                    {{ exportingData ? "Exporting..." : "Export" }}
+                  </AppButton>
+                  <AppButton variant="secondary" :disabled="loading || importingData" @click="onOpenImportPicker">
+                    {{ importingData ? "Importing..." : "Import" }}
+                  </AppButton>
                   <AppButton variant="secondary" :disabled="loading || saving" @click="loadScholars">
                     {{ loading ? "Refreshing..." : "Refresh" }}
                   </AppButton>
                 </div>
               </div>
+              <input
+                ref="importFileInput"
+                type="file"
+                class="sr-only"
+                accept=".json,application/json"
+                @change="onImportFileSelected"
+              />
 
               <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem]">
                 <label class="grid gap-1 text-xs font-medium uppercase tracking-wide text-secondary" for="tracked-scholar-filter">

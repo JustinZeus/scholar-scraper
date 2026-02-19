@@ -30,6 +30,7 @@ class PublicationListItem:
     citation_count: int
     venue_text: str | None
     pub_url: str | None
+    pdf_url: str | None
     is_read: bool
     first_seen_at: datetime
     is_new_in_latest_run: bool
@@ -45,6 +46,7 @@ class UnreadPublicationItem:
     citation_count: int
     venue_text: str | None
     pub_url: str | None
+    pdf_url: str | None
 
 
 def resolve_publication_view_mode(value: str | None) -> str:
@@ -95,6 +97,7 @@ def publications_query(
             Publication.citation_count,
             Publication.venue_text,
             Publication.pub_url,
+            Publication.pdf_url,
             ScholarPublication.is_read,
             ScholarPublication.first_seen_run_id,
             ScholarPublication.created_at,
@@ -116,6 +119,44 @@ def publications_query(
         else:
             stmt = stmt.where(ScholarPublication.first_seen_run_id == latest_run_id)
     return stmt
+
+
+def _publication_list_item_from_row(
+    row: tuple,
+    *,
+    latest_run_id: int | None,
+) -> PublicationListItem:
+    (
+        publication_id,
+        scholar_profile_id,
+        display_name,
+        scholar_id,
+        title_raw,
+        year,
+        citation_count,
+        venue_text,
+        pub_url,
+        pdf_url,
+        is_read,
+        first_seen_run_id,
+        created_at,
+    ) = row
+    return PublicationListItem(
+        publication_id=int(publication_id),
+        scholar_profile_id=int(scholar_profile_id),
+        scholar_label=(display_name or scholar_id),
+        title=title_raw,
+        year=year,
+        citation_count=int(citation_count or 0),
+        venue_text=venue_text,
+        pub_url=pub_url,
+        pdf_url=pdf_url,
+        is_read=bool(is_read),
+        first_seen_at=created_at,
+        is_new_in_latest_run=(
+            latest_run_id is not None and int(first_seen_run_id or 0) == latest_run_id
+        ),
+    )
 
 
 async def list_for_user(
@@ -140,42 +181,10 @@ async def list_for_user(
             limit=limit,
         )
     )
-
-    rows = result.all()
-    items: list[PublicationListItem] = []
-    for row in rows:
-        (
-            publication_id,
-            scholar_profile_id,
-            display_name,
-            scholar_id,
-            title_raw,
-            year,
-            citation_count,
-            venue_text,
-            pub_url,
-            is_read,
-            first_seen_run_id,
-            created_at,
-        ) = row
-        items.append(
-            PublicationListItem(
-                publication_id=int(publication_id),
-                scholar_profile_id=int(scholar_profile_id),
-                scholar_label=(display_name or scholar_id),
-                title=title_raw,
-                year=year,
-                citation_count=int(citation_count or 0),
-                venue_text=venue_text,
-                pub_url=pub_url,
-                is_read=bool(is_read),
-                first_seen_at=created_at,
-                is_new_in_latest_run=(
-                    latest_run_id is not None and int(first_seen_run_id or 0) == latest_run_id
-                ),
-            )
-        )
-    return items
+    return [
+        _publication_list_item_from_row(row, latest_run_id=latest_run_id)
+        for row in result.all()
+    ]
 
 
 async def list_unread_for_user(
@@ -206,6 +215,7 @@ async def list_unread_for_user(
             citation_count,
             venue_text,
             pub_url,
+            pdf_url,
             _is_read,
             _first_seen_run_id,
             _created_at,
@@ -220,6 +230,7 @@ async def list_unread_for_user(
                 citation_count=int(citation_count or 0),
                 venue_text=venue_text,
                 pub_url=pub_url,
+                pdf_url=pdf_url,
             )
         )
     return items
@@ -248,6 +259,7 @@ async def list_new_for_latest_run_for_user(
             citation_count=row.citation_count,
             venue_text=row.venue_text,
             pub_url=row.pub_url,
+            pdf_url=row.pdf_url,
         )
         for row in rows
     ]

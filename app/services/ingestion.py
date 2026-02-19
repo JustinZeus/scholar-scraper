@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -87,6 +87,59 @@ class PagedParseResult:
     skipped_no_change: bool
 
 
+@dataclass
+class RunProgress:
+    succeeded_count: int = 0
+    failed_count: int = 0
+    partial_count: int = 0
+    scholar_results: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ScholarProcessingOutcome:
+    result_entry: dict[str, Any]
+    succeeded_count_delta: int
+    failed_count_delta: int
+    partial_count_delta: int
+    discovered_publication_count: int
+
+
+@dataclass(frozen=True)
+class RunFailureSummary:
+    failed_state_counts: dict[str, int]
+    failed_reason_counts: dict[str, int]
+    scrape_failure_counts: dict[str, int]
+    retries_scheduled_count: int
+    scholars_with_retries_count: int
+    retry_exhausted_count: int
+
+
+@dataclass(frozen=True)
+class RunAlertSummary:
+    blocked_failure_count: int
+    network_failure_count: int
+    blocked_failure_threshold: int
+    network_failure_threshold: int
+    retry_scheduled_threshold: int
+    alert_flags: dict[str, bool]
+
+
+@dataclass
+class PagedLoopState:
+    fetch_result: FetchResult
+    parsed_page: ParsedProfilePage
+    attempt_log: list[dict[str, Any]]
+    page_logs: list[dict[str, Any]]
+    publications: list[PublicationCandidate]
+    pages_fetched: int
+    pages_attempted: int
+    current_cstart: int
+    next_cstart: int
+    has_more_remaining: bool = False
+    pagination_truncated_reason: str | None = None
+    continuation_cstart: int | None = None
+
+
 class RunAlreadyInProgressError(RuntimeError):
     """Raised when a run lock for a user is already held by another process."""
 
@@ -131,39 +184,36 @@ class ScholarIngestionService:
     def __init__(self, *, source: ScholarSource) -> None:
         self._source = source
 
-    async def run_for_user(
+    async def _load_user_settings_for_run(
         self,
         db_session: AsyncSession,
         *,
         user_id: int,
         trigger_type: RunTriggerType,
-        request_delay_seconds: int,
-        network_error_retries: int = 1,
-        retry_backoff_seconds: float = 1.0,
-        max_pages_per_scholar: int = 30,
-        page_size: int = 100,
-        scholar_profile_ids: set[int] | None = None,
-        start_cstart_by_scholar_id: dict[int, int] | None = None,
-        auto_queue_continuations: bool = True,
-        queue_delay_seconds: int = 60,
-        idempotency_key: str | None = None,
-        alert_blocked_failure_threshold: int = 1,
-        alert_network_failure_threshold: int = 2,
-        alert_retry_scheduled_threshold: int = 3,
-    ) -> RunExecutionSummary:
+    ):
         user_settings = await user_settings_service.get_or_create_settings(
             db_session,
             user_id=user_id,
         )
-        now_utc = datetime.now(timezone.utc)
-        previous_safety_state = run_safety_service.get_safety_event_context(
-            user_settings,
-            now_utc=now_utc,
+        await self._enforce_safety_gate(
+            db_session,
+            user_settings=user_settings,
+            user_id=user_id,
+            trigger_type=trigger_type,
         )
-        if run_safety_service.clear_expired_cooldown(
-            user_settings,
-            now_utc=now_utc,
-        ):
+        return user_settings
+
+    async def _enforce_safety_gate(
+        self,
+        db_session: AsyncSession,
+        *,
+        user_settings,
+        user_id: int,
+        trigger_type: RunTriggerType,
+    ) -> None:
+        now_utc = datetime.now(timezone.utc)
+        previous = run_safety_service.get_safety_event_context(user_settings, now_utc=now_utc)
+        if run_safety_service.clear_expired_cooldown(user_settings, now_utc=now_utc):
             await db_session.commit()
             await db_session.refresh(user_settings)
             logger.info(
@@ -171,48 +221,62 @@ class ScholarIngestionService:
                 extra={
                     "event": "ingestion.safety_cooldown_cleared",
                     "user_id": user_id,
-                    "reason": previous_safety_state.get("cooldown_reason"),
-                    "cooldown_until": previous_safety_state.get("cooldown_until"),
+                    "reason": previous.get("cooldown_reason"),
+                    "cooldown_until": previous.get("cooldown_until"),
                     "metric_name": "ingestion_safety_cooldown_cleared_total",
                     "metric_value": 1,
                 },
             )
             now_utc = datetime.now(timezone.utc)
         if run_safety_service.is_cooldown_active(user_settings, now_utc=now_utc):
-            safety_state = run_safety_service.register_cooldown_blocked_start(
-                user_settings,
+            await self._raise_safety_blocked_start(
+                db_session,
+                user_settings=user_settings,
+                user_id=user_id,
+                trigger_type=trigger_type,
                 now_utc=now_utc,
             )
-            await db_session.commit()
-            logger.warning(
-                "ingestion.safety_policy_blocked_run_start",
-                extra={
-                    "event": "ingestion.safety_policy_blocked_run_start",
-                    "user_id": user_id,
-                    "trigger_type": trigger_type.value,
-                    "reason": safety_state.get("cooldown_reason"),
-                    "cooldown_until": safety_state.get("cooldown_until"),
-                    "cooldown_remaining_seconds": safety_state.get("cooldown_remaining_seconds"),
-                    "blocked_start_count": (
-                        (safety_state.get("counters") or {}).get("blocked_start_count")
-                    ),
-                    "metric_name": "ingestion_safety_run_start_blocked_total",
-                    "metric_value": 1,
-                },
-            )
-            raise RunBlockedBySafetyPolicyError(
-                code="scrape_cooldown_active",
-                message="Scrape safety cooldown is active; run start is temporarily blocked.",
-                safety_state=safety_state,
-            )
 
-        lock_acquired = await self._try_acquire_user_lock(
-            db_session,
-            user_id=user_id,
+    async def _raise_safety_blocked_start(
+        self,
+        db_session: AsyncSession,
+        *,
+        user_settings,
+        user_id: int,
+        trigger_type: RunTriggerType,
+        now_utc: datetime,
+    ) -> None:
+        safety_state = run_safety_service.register_cooldown_blocked_start(
+            user_settings,
+            now_utc=now_utc,
         )
-        if not lock_acquired:
-            raise RunAlreadyInProgressError(f"Run already in progress for user_id={user_id}.")
+        await db_session.commit()
+        logger.warning(
+            "ingestion.safety_policy_blocked_run_start",
+            extra={
+                "event": "ingestion.safety_policy_blocked_run_start",
+                "user_id": user_id,
+                "trigger_type": trigger_type.value,
+                "reason": safety_state.get("cooldown_reason"),
+                "cooldown_until": safety_state.get("cooldown_until"),
+                "cooldown_remaining_seconds": safety_state.get("cooldown_remaining_seconds"),
+                "blocked_start_count": ((safety_state.get("counters") or {}).get("blocked_start_count")),
+                "metric_name": "ingestion_safety_run_start_blocked_total",
+                "metric_value": 1,
+            },
+        )
+        raise RunBlockedBySafetyPolicyError(
+            code="scrape_cooldown_active",
+            message="Scrape safety cooldown is active; run start is temporarily blocked.",
+            safety_state=safety_state,
+        )
 
+    @staticmethod
+    def _normalize_run_targets(
+        *,
+        scholar_profile_ids: set[int] | None,
+        start_cstart_by_scholar_id: dict[int, int] | None,
+    ) -> tuple[set[int] | None, dict[int, int]]:
         filtered_scholar_ids = (
             {int(value) for value in scholar_profile_ids}
             if scholar_profile_ids is not None
@@ -222,41 +286,94 @@ class ScholarIngestionService:
             int(key): max(0, int(value))
             for key, value in (start_cstart_by_scholar_id or {}).items()
         }
+        return filtered_scholar_ids, start_cstart_map
 
+    async def _load_target_scholars(
+        self,
+        db_session: AsyncSession,
+        *,
+        user_id: int,
+        filtered_scholar_ids: set[int] | None,
+    ) -> list[ScholarProfile]:
         scholars_stmt = (
             select(ScholarProfile)
-            .where(
-                ScholarProfile.user_id == user_id,
-                ScholarProfile.is_enabled.is_(True),
-            )
+            .where(ScholarProfile.user_id == user_id, ScholarProfile.is_enabled.is_(True))
             .order_by(ScholarProfile.created_at.asc(), ScholarProfile.id.asc())
         )
         if filtered_scholar_ids is not None:
-            scholars_stmt = scholars_stmt.where(
-                ScholarProfile.id.in_(filtered_scholar_ids)
+            scholars_stmt = scholars_stmt.where(ScholarProfile.id.in_(filtered_scholar_ids))
+        scholars_result = await db_session.execute(scholars_stmt)
+        scholars = list(scholars_result.scalars().all())
+        await self._clear_missing_filtered_jobs(
+            db_session,
+            user_id=user_id,
+            filtered_scholar_ids=filtered_scholar_ids,
+            scholars=scholars,
+        )
+        return scholars
+
+    async def _clear_missing_filtered_jobs(
+        self,
+        db_session: AsyncSession,
+        *,
+        user_id: int,
+        filtered_scholar_ids: set[int] | None,
+        scholars: list[ScholarProfile],
+    ) -> None:
+        if filtered_scholar_ids is None:
+            return
+        found_ids = {int(scholar.id) for scholar in scholars}
+        missing_ids = filtered_scholar_ids - found_ids
+        for scholar_profile_id in missing_ids:
+            await queue_service.clear_job_for_scholar(
+                db_session,
+                user_id=user_id,
+                scholar_profile_id=scholar_profile_id,
             )
 
-        scholars_result = await db_session.execute(
-            scholars_stmt
+    @staticmethod
+    def _create_running_run(
+        *,
+        user_id: int,
+        trigger_type: RunTriggerType,
+        scholar_count: int,
+        idempotency_key: str | None,
+    ) -> CrawlRun:
+        return CrawlRun(
+            user_id=user_id,
+            trigger_type=trigger_type,
+            status=RunStatus.RUNNING,
+            scholar_count=scholar_count,
+            new_pub_count=0,
+            idempotency_key=idempotency_key,
+            error_log={},
         )
-        scholars = list(scholars_result.scalars().all())
-        if filtered_scholar_ids is not None:
-            found_ids = {int(scholar.id) for scholar in scholars}
-            missing_ids = filtered_scholar_ids - found_ids
-            for scholar_profile_id in missing_ids:
-                await queue_service.clear_job_for_scholar(
-                    db_session,
-                    user_id=user_id,
-                    scholar_profile_id=scholar_profile_id,
-                )
+
+    @staticmethod
+    def _log_run_started(
+        *,
+        user_id: int,
+        trigger_type: RunTriggerType,
+        scholar_count: int,
+        filtered: bool,
+        request_delay_seconds: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+        max_pages_per_scholar: int,
+        page_size: int,
+        idempotency_key: str | None,
+        alert_blocked_failure_threshold: int,
+        alert_network_failure_threshold: int,
+        alert_retry_scheduled_threshold: int,
+    ) -> None:
         logger.info(
             "ingestion.run_started",
             extra={
                 "event": "ingestion.run_started",
                 "user_id": user_id,
                 "trigger_type": trigger_type.value,
-                "scholar_count": len(scholars),
-                "is_filtered_run": filtered_scholar_ids is not None,
+                "scholar_count": scholar_count,
+                "is_filtered_run": filtered,
                 "request_delay_seconds": request_delay_seconds,
                 "network_error_retries": network_error_retries,
                 "retry_backoff_seconds": retry_backoff_seconds,
@@ -269,256 +386,538 @@ class ScholarIngestionService:
             },
         )
 
-        run = CrawlRun(
-            user_id=user_id,
-            trigger_type=trigger_type,
-            status=RunStatus.RUNNING,
-            scholar_count=len(scholars),
-            new_pub_count=0,
-            idempotency_key=idempotency_key,
-            error_log={},
-        )
-        db_session.add(run)
-        await db_session.flush()
+    @staticmethod
+    async def _wait_between_scholars(*, index: int, request_delay_seconds: int) -> None:
+        if index <= 0 or request_delay_seconds <= 0:
+            return
+        await asyncio.sleep(float(request_delay_seconds))
 
-        succeeded_count = 0
-        failed_count = 0
-        partial_count = 0
-        scholar_results: list[dict[str, Any]] = []
+    @staticmethod
+    def _assert_valid_paged_parse_result(
+        *,
+        scholar_id: str,
+        paged_parse_result: PagedParseResult,
+    ) -> None:
+        parsed_page = paged_parse_result.parsed_page
+        if parsed_page.state in {ParseState.OK, ParseState.NO_RESULTS}:
+            if any(code.startswith("layout_") for code in parsed_page.warnings):
+                raise RuntimeError(f"Layout warning marked as terminal for scholar_id={scholar_id}.")
+        for publication in paged_parse_result.publications:
+            if not publication.title.strip():
+                raise RuntimeError(f"Malformed publication title for scholar_id={scholar_id}.")
+            if publication.citation_count is not None and int(publication.citation_count) < 0:
+                raise RuntimeError(f"Negative citation count for scholar_id={scholar_id}.")
 
-        for index, scholar in enumerate(scholars):
-            if index > 0 and request_delay_seconds > 0:
-                await asyncio.sleep(float(request_delay_seconds))
+    @staticmethod
+    def _apply_first_page_profile_metadata(
+        *,
+        scholar: ScholarProfile,
+        paged_parse_result: PagedParseResult,
+        run_dt: datetime,
+    ) -> None:
+        first_page = paged_parse_result.first_page_parsed_page
+        if first_page.profile_name and not (scholar.display_name or "").strip():
+            scholar.display_name = first_page.profile_name
+        if first_page.profile_image_url:
+            scholar.profile_image_url = first_page.profile_image_url
+        if paged_parse_result.first_page_fingerprint_sha256:
+            scholar.last_initial_page_fingerprint_sha256 = paged_parse_result.first_page_fingerprint_sha256
+        scholar.last_initial_page_checked_at = run_dt
 
-            run_dt = datetime.now(timezone.utc)
-            start_cstart = int(start_cstart_map.get(int(scholar.id), 0))
-
-            paged_parse_result = await self._fetch_and_parse_all_pages_with_retry(
-                scholar_id=scholar.scholar_id,
-                start_cstart=start_cstart,
-                request_delay_seconds=request_delay_seconds,
-                network_error_retries=network_error_retries,
-                retry_backoff_seconds=retry_backoff_seconds,
-                max_pages=max_pages_per_scholar,
-                page_size=page_size,
-                previous_initial_page_fingerprint_sha256=scholar.last_initial_page_fingerprint_sha256,
-            )
-            fetch_result = paged_parse_result.fetch_result
-            parsed_page = paged_parse_result.parsed_page
-            publications = paged_parse_result.publications
-            attempt_log = paged_parse_result.attempt_log
-            page_logs = paged_parse_result.page_logs
-
-            first_page = paged_parse_result.first_page_parsed_page
-            if first_page.profile_name and not (scholar.display_name or "").strip():
-                scholar.display_name = first_page.profile_name
-            if first_page.profile_image_url:
-                scholar.profile_image_url = first_page.profile_image_url
-            if paged_parse_result.first_page_fingerprint_sha256:
-                scholar.last_initial_page_fingerprint_sha256 = (
-                    paged_parse_result.first_page_fingerprint_sha256
-                )
-            scholar.last_initial_page_checked_at = run_dt
-
-            logger.info(
-                "ingestion.scholar_parsed",
-                extra={
-                    "event": "ingestion.scholar_parsed",
-                    "user_id": user_id,
-                    "crawl_run_id": run.id,
-                    "scholar_profile_id": scholar.id,
-                    "scholar_id": scholar.scholar_id,
-                    "state": parsed_page.state.value,
-                    "publication_count": len(publications),
-                    "has_show_more_button": parsed_page.has_show_more_button,
-                    "pages_fetched": paged_parse_result.pages_fetched,
-                    "pages_attempted": paged_parse_result.pages_attempted,
-                    "has_more_remaining": paged_parse_result.has_more_remaining,
-                    "pagination_truncated_reason": paged_parse_result.pagination_truncated_reason,
-                    "warning_count": len(parsed_page.warnings),
-                    "skipped_no_change": paged_parse_result.skipped_no_change,
-                },
-            )
-
-            result_entry = {
+    @staticmethod
+    def _log_scholar_parsed(
+        *,
+        user_id: int,
+        run_id: int,
+        scholar: ScholarProfile,
+        paged_parse_result: PagedParseResult,
+    ) -> None:
+        parsed_page = paged_parse_result.parsed_page
+        logger.info(
+            "ingestion.scholar_parsed",
+            extra={
+                "event": "ingestion.scholar_parsed",
+                "user_id": user_id,
+                "crawl_run_id": run_id,
                 "scholar_profile_id": scholar.id,
                 "scholar_id": scholar.scholar_id,
                 "state": parsed_page.state.value,
-                "state_reason": parsed_page.state_reason,
-                "outcome": "failed",
-                "attempt_count": len(attempt_log),
-                "publication_count": len(publications),
-                "start_cstart": start_cstart,
-                "articles_range": parsed_page.articles_range,
-                "warnings": parsed_page.warnings,
+                "publication_count": len(paged_parse_result.publications),
                 "has_show_more_button": parsed_page.has_show_more_button,
                 "pages_fetched": paged_parse_result.pages_fetched,
                 "pages_attempted": paged_parse_result.pages_attempted,
                 "has_more_remaining": paged_parse_result.has_more_remaining,
                 "pagination_truncated_reason": paged_parse_result.pagination_truncated_reason,
-                "continuation_cstart": paged_parse_result.continuation_cstart,
+                "warning_count": len(parsed_page.warnings),
                 "skipped_no_change": paged_parse_result.skipped_no_change,
-                "initial_page_fingerprint_sha256": paged_parse_result.first_page_fingerprint_sha256,
-            }
-            if paged_parse_result.skipped_no_change:
-                scholar.last_run_status = RunStatus.SUCCESS
-                scholar.last_run_dt = run_dt
-                succeeded_count += 1
-                result_entry["state"] = first_page.state.value
-                result_entry["state_reason"] = "no_change_initial_page_signature"
-                result_entry["outcome"] = "success"
-                result_entry["publication_count"] = 0
-                result_entry["warnings"] = first_page.warnings
-                result_entry["debug"] = {
-                    "state_reason": "no_change_initial_page_signature",
-                    "first_page_fingerprint_sha256": paged_parse_result.first_page_fingerprint_sha256,
-                    "attempt_log": attempt_log,
-                    "page_logs": page_logs,
-                }
-                scholar_results.append(result_entry)
-                queue_reason, queue_cstart = self._resolve_continuation_queue_target(
-                    outcome=str(result_entry.get("outcome", "")),
-                    state=str(result_entry.get("state", "")),
-                    pagination_truncated_reason=paged_parse_result.pagination_truncated_reason,
-                    continuation_cstart=paged_parse_result.continuation_cstart,
-                    fallback_cstart=start_cstart,
-                )
-                if auto_queue_continuations and queue_reason is not None:
-                    await queue_service.upsert_job(
-                        db_session,
-                        user_id=user_id,
-                        scholar_profile_id=scholar.id,
-                        resume_cstart=queue_cstart,
-                        reason=queue_reason,
-                        run_id=run.id,
-                        delay_seconds=queue_delay_seconds,
-                    )
-                    result_entry["continuation_enqueued"] = True
-                    result_entry["continuation_reason"] = queue_reason
-                    result_entry["continuation_cstart"] = queue_cstart
-                else:
-                    cleared = await queue_service.clear_job_for_scholar(
-                        db_session,
-                        user_id=user_id,
-                        scholar_profile_id=scholar.id,
-                    )
-                    if cleared:
-                        result_entry["continuation_cleared"] = True
-                continue
+            },
+        )
 
-            had_page_failure = parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}
-            has_partial_publication_set = len(publications) > 0 and had_page_failure
-            is_partial_due_to_pagination = (
-                paged_parse_result.has_more_remaining
-                or paged_parse_result.pagination_truncated_reason is not None
+    @staticmethod
+    def _build_result_entry(
+        *,
+        scholar: ScholarProfile,
+        start_cstart: int,
+        paged_parse_result: PagedParseResult,
+    ) -> dict[str, Any]:
+        parsed_page = paged_parse_result.parsed_page
+        return {
+            "scholar_profile_id": scholar.id,
+            "scholar_id": scholar.scholar_id,
+            "state": parsed_page.state.value,
+            "state_reason": parsed_page.state_reason,
+            "outcome": "failed",
+            "attempt_count": len(paged_parse_result.attempt_log),
+            "publication_count": len(paged_parse_result.publications),
+            "start_cstart": start_cstart,
+            "articles_range": parsed_page.articles_range,
+            "warnings": parsed_page.warnings,
+            "has_show_more_button": parsed_page.has_show_more_button,
+            "pages_fetched": paged_parse_result.pages_fetched,
+            "pages_attempted": paged_parse_result.pages_attempted,
+            "has_more_remaining": paged_parse_result.has_more_remaining,
+            "pagination_truncated_reason": paged_parse_result.pagination_truncated_reason,
+            "continuation_cstart": paged_parse_result.continuation_cstart,
+            "skipped_no_change": paged_parse_result.skipped_no_change,
+            "initial_page_fingerprint_sha256": paged_parse_result.first_page_fingerprint_sha256,
+        }
+
+    def _skipped_no_change_outcome(
+        self,
+        *,
+        scholar: ScholarProfile,
+        run_dt: datetime,
+        paged_parse_result: PagedParseResult,
+        result_entry: dict[str, Any],
+    ) -> ScholarProcessingOutcome:
+        first_page = paged_parse_result.first_page_parsed_page
+        scholar.last_run_status = RunStatus.SUCCESS
+        scholar.last_run_dt = run_dt
+        result_entry["state"] = first_page.state.value
+        result_entry["state_reason"] = "no_change_initial_page_signature"
+        result_entry["outcome"] = "success"
+        result_entry["publication_count"] = 0
+        result_entry["warnings"] = first_page.warnings
+        result_entry["debug"] = {
+            "state_reason": "no_change_initial_page_signature",
+            "first_page_fingerprint_sha256": paged_parse_result.first_page_fingerprint_sha256,
+            "attempt_log": paged_parse_result.attempt_log,
+            "page_logs": paged_parse_result.page_logs,
+        }
+        return ScholarProcessingOutcome(
+            result_entry=result_entry,
+            succeeded_count_delta=1,
+            failed_count_delta=0,
+            partial_count_delta=0,
+            discovered_publication_count=0,
+        )
+
+    async def _upsert_publications_outcome(
+        self,
+        db_session: AsyncSession,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        run_dt: datetime,
+        paged_parse_result: PagedParseResult,
+        result_entry: dict[str, Any],
+    ) -> ScholarProcessingOutcome:
+        parsed_page = paged_parse_result.parsed_page
+        publications = paged_parse_result.publications
+        had_page_failure = parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}
+        has_partial_set = len(publications) > 0 and had_page_failure
+        if (not had_page_failure) or has_partial_set:
+            return await self._upsert_success_or_exception(
+                db_session,
+                run=run,
+                scholar=scholar,
+                run_dt=run_dt,
+                paged_parse_result=paged_parse_result,
+                result_entry=result_entry,
+                has_partial_publication_set=has_partial_set,
+            )
+        return self._parse_failure_outcome(
+            scholar=scholar,
+            run_dt=run_dt,
+            paged_parse_result=paged_parse_result,
+            result_entry=result_entry,
+        )
+
+    async def _upsert_success_or_exception(
+        self,
+        db_session: AsyncSession,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        run_dt: datetime,
+        paged_parse_result: PagedParseResult,
+        result_entry: dict[str, Any],
+        has_partial_publication_set: bool,
+    ) -> ScholarProcessingOutcome:
+        try:
+            return await self._upsert_success(
+                db_session,
+                run=run,
+                scholar=scholar,
+                run_dt=run_dt,
+                paged_parse_result=paged_parse_result,
+                result_entry=result_entry,
+                has_partial_publication_set=has_partial_publication_set,
+            )
+        except Exception as exc:
+            return self._upsert_exception_outcome(
+                run=run,
+                scholar=scholar,
+                run_dt=run_dt,
+                paged_parse_result=paged_parse_result,
+                result_entry=result_entry,
+                exc=exc,
             )
 
-            if (not had_page_failure) or has_partial_publication_set:
-                try:
-                    discovered_publication_count = await self._upsert_profile_publications(
-                        db_session,
-                        run=run,
-                        scholar=scholar,
-                        publications=publications,
-                    )
-                    run.new_pub_count = int(run.new_pub_count or 0) + discovered_publication_count
-
-                    is_partial_scholar = is_partial_due_to_pagination or has_partial_publication_set
-                    scholar.last_run_status = (
-                        RunStatus.PARTIAL_FAILURE if is_partial_scholar else RunStatus.SUCCESS
-                    )
-                    scholar.last_run_dt = run_dt
-                    succeeded_count += 1
-                    result_entry["outcome"] = "partial" if is_partial_scholar else "success"
-
-                    if is_partial_scholar:
-                        partial_count += 1
-                        result_entry["debug"] = self._build_failure_debug_context(
-                            fetch_result=fetch_result,
-                            parsed_page=parsed_page,
-                            attempt_log=attempt_log,
-                            page_logs=page_logs,
-                        )
-                except Exception as exc:
-                    failed_count += 1
-                    scholar.last_run_status = RunStatus.FAILED
-                    scholar.last_run_dt = run_dt
-                    result_entry["state"] = "ingestion_error"
-                    result_entry["state_reason"] = "publication_upsert_exception"
-                    result_entry["outcome"] = "failed"
-                    result_entry["error"] = str(exc)
-                    result_entry["debug"] = self._build_failure_debug_context(
-                        fetch_result=fetch_result,
-                        parsed_page=parsed_page,
-                        attempt_log=attempt_log,
-                        page_logs=page_logs,
-                        exception=exc,
-                    )
-                    logger.exception(
-                        "ingestion.scholar_failed",
-                        extra={
-                            "event": "ingestion.scholar_failed",
-                            "user_id": user_id,
-                            "crawl_run_id": run.id,
-                            "scholar_profile_id": scholar.id,
-                            "scholar_id": scholar.scholar_id,
-                        },
-                    )
-            else:
-                failed_count += 1
-                scholar.last_run_status = RunStatus.FAILED
-                scholar.last_run_dt = run_dt
-                result_entry["debug"] = self._build_failure_debug_context(
-                    fetch_result=fetch_result,
-                    parsed_page=parsed_page,
-                    attempt_log=attempt_log,
-                    page_logs=page_logs,
-                )
-                logger.warning(
-                    "ingestion.scholar_parse_failed",
-                    extra={
-                        "event": "ingestion.scholar_parse_failed",
-                        "user_id": user_id,
-                        "crawl_run_id": run.id,
-                        "scholar_profile_id": scholar.id,
-                        "scholar_id": scholar.scholar_id,
-                        "state": parsed_page.state.value,
-                        "state_reason": parsed_page.state_reason,
-                        "status_code": fetch_result.status_code,
-                    },
-                )
-
-            queue_reason, queue_cstart = self._resolve_continuation_queue_target(
-                outcome=str(result_entry.get("outcome", "")),
-                state=str(result_entry.get("state", "")),
-                pagination_truncated_reason=paged_parse_result.pagination_truncated_reason,
-                continuation_cstart=paged_parse_result.continuation_cstart,
-                fallback_cstart=start_cstart,
+    async def _upsert_success(
+        self,
+        db_session: AsyncSession,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        run_dt: datetime,
+        paged_parse_result: PagedParseResult,
+        result_entry: dict[str, Any],
+        has_partial_publication_set: bool,
+    ) -> ScholarProcessingOutcome:
+        discovered_count = await self._upsert_profile_publications(
+            db_session,
+            run=run,
+            scholar=scholar,
+            publications=paged_parse_result.publications,
+        )
+        is_partial = (
+            paged_parse_result.has_more_remaining
+            or paged_parse_result.pagination_truncated_reason is not None
+            or has_partial_publication_set
+        )
+        scholar.last_run_status = RunStatus.PARTIAL_FAILURE if is_partial else RunStatus.SUCCESS
+        scholar.last_run_dt = run_dt
+        result_entry["outcome"] = "partial" if is_partial else "success"
+        if is_partial:
+            result_entry["debug"] = self._build_failure_debug_context(
+                fetch_result=paged_parse_result.fetch_result,
+                parsed_page=paged_parse_result.parsed_page,
+                attempt_log=paged_parse_result.attempt_log,
+                page_logs=paged_parse_result.page_logs,
             )
-            if auto_queue_continuations and queue_reason is not None:
-                await queue_service.upsert_job(
-                    db_session,
-                    user_id=user_id,
-                    scholar_profile_id=scholar.id,
-                    resume_cstart=queue_cstart,
-                    reason=queue_reason,
-                    run_id=run.id,
-                    delay_seconds=queue_delay_seconds,
-                )
-                result_entry["continuation_enqueued"] = True
-                result_entry["continuation_reason"] = queue_reason
-                result_entry["continuation_cstart"] = queue_cstart
-            else:
-                cleared = await queue_service.clear_job_for_scholar(
-                    db_session,
-                    user_id=user_id,
-                    scholar_profile_id=scholar.id,
-                )
-                if cleared:
-                    result_entry["continuation_cleared"] = True
+        return ScholarProcessingOutcome(
+            result_entry=result_entry,
+            succeeded_count_delta=1,
+            failed_count_delta=0,
+            partial_count_delta=1 if is_partial else 0,
+            discovered_publication_count=discovered_count,
+        )
 
-            scholar_results.append(result_entry)
+    def _upsert_exception_outcome(
+        self,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        run_dt: datetime,
+        paged_parse_result: PagedParseResult,
+        result_entry: dict[str, Any],
+        exc: Exception,
+    ) -> ScholarProcessingOutcome:
+        scholar.last_run_status = RunStatus.FAILED
+        scholar.last_run_dt = run_dt
+        result_entry["state"] = "ingestion_error"
+        result_entry["state_reason"] = "publication_upsert_exception"
+        result_entry["outcome"] = "failed"
+        result_entry["error"] = str(exc)
+        result_entry["debug"] = self._build_failure_debug_context(
+            fetch_result=paged_parse_result.fetch_result,
+            parsed_page=paged_parse_result.parsed_page,
+            attempt_log=paged_parse_result.attempt_log,
+            page_logs=paged_parse_result.page_logs,
+            exception=exc,
+        )
+        logger.exception(
+            "ingestion.scholar_failed",
+            extra={
+                "event": "ingestion.scholar_failed",
+                "crawl_run_id": run.id,
+                "scholar_profile_id": scholar.id,
+                "scholar_id": scholar.scholar_id,
+            },
+        )
+        return ScholarProcessingOutcome(result_entry, 0, 1, 0, 0)
 
+    def _parse_failure_outcome(
+        self,
+        *,
+        scholar: ScholarProfile,
+        run_dt: datetime,
+        paged_parse_result: PagedParseResult,
+        result_entry: dict[str, Any],
+    ) -> ScholarProcessingOutcome:
+        scholar.last_run_status = RunStatus.FAILED
+        scholar.last_run_dt = run_dt
+        result_entry["debug"] = self._build_failure_debug_context(
+            fetch_result=paged_parse_result.fetch_result,
+            parsed_page=paged_parse_result.parsed_page,
+            attempt_log=paged_parse_result.attempt_log,
+            page_logs=paged_parse_result.page_logs,
+        )
+        logger.warning(
+            "ingestion.scholar_parse_failed",
+            extra={
+                "event": "ingestion.scholar_parse_failed",
+                "scholar_profile_id": scholar.id,
+                "scholar_id": scholar.scholar_id,
+                "state": paged_parse_result.parsed_page.state.value,
+                "state_reason": paged_parse_result.parsed_page.state_reason,
+                "status_code": paged_parse_result.fetch_result.status_code,
+            },
+        )
+        return ScholarProcessingOutcome(result_entry, 0, 1, 0, 0)
+
+    async def _sync_continuation_queue(
+        self,
+        db_session: AsyncSession,
+        *,
+        user_id: int,
+        scholar: ScholarProfile,
+        run: CrawlRun,
+        start_cstart: int,
+        result_entry: dict[str, Any],
+        paged_parse_result: PagedParseResult,
+        auto_queue_continuations: bool,
+        queue_delay_seconds: int,
+    ) -> None:
+        queue_reason, queue_cstart = self._resolve_continuation_queue_target(
+            outcome=str(result_entry.get("outcome", "")),
+            state=str(result_entry.get("state", "")),
+            pagination_truncated_reason=paged_parse_result.pagination_truncated_reason,
+            continuation_cstart=paged_parse_result.continuation_cstart,
+            fallback_cstart=start_cstart,
+        )
+        if auto_queue_continuations and queue_reason is not None:
+            await queue_service.upsert_job(
+                db_session,
+                user_id=user_id,
+                scholar_profile_id=scholar.id,
+                resume_cstart=queue_cstart,
+                reason=queue_reason,
+                run_id=run.id,
+                delay_seconds=queue_delay_seconds,
+            )
+            result_entry["continuation_enqueued"] = True
+            result_entry["continuation_reason"] = queue_reason
+            result_entry["continuation_cstart"] = queue_cstart
+            return
+        if await queue_service.clear_job_for_scholar(db_session, user_id=user_id, scholar_profile_id=scholar.id):
+            result_entry["continuation_cleared"] = True
+
+    async def _process_scholar(
+        self,
+        db_session: AsyncSession,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        user_id: int,
+        request_delay_seconds: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+        max_pages_per_scholar: int,
+        page_size: int,
+        start_cstart: int,
+        auto_queue_continuations: bool,
+        queue_delay_seconds: int,
+    ) -> ScholarProcessingOutcome:
+        try:
+            return await self._process_scholar_inner(
+                db_session,
+                run=run,
+                scholar=scholar,
+                user_id=user_id,
+                request_delay_seconds=request_delay_seconds,
+                network_error_retries=network_error_retries,
+                retry_backoff_seconds=retry_backoff_seconds,
+                max_pages_per_scholar=max_pages_per_scholar,
+                page_size=page_size,
+                start_cstart=start_cstart,
+                auto_queue_continuations=auto_queue_continuations,
+                queue_delay_seconds=queue_delay_seconds,
+            )
+        except Exception as exc:
+            return self._unexpected_scholar_exception_outcome(
+                run=run,
+                scholar=scholar,
+                start_cstart=start_cstart,
+                exc=exc,
+            )
+
+    async def _process_scholar_inner(
+        self,
+        db_session: AsyncSession,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        user_id: int,
+        request_delay_seconds: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+        max_pages_per_scholar: int,
+        page_size: int,
+        start_cstart: int,
+        auto_queue_continuations: bool,
+        queue_delay_seconds: int,
+    ) -> ScholarProcessingOutcome:
+        run_dt, paged_parse_result, result_entry = await self._fetch_and_prepare_scholar_result(
+            run=run,
+            scholar=scholar,
+            user_id=user_id,
+            start_cstart=start_cstart,
+            request_delay_seconds=request_delay_seconds,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            max_pages_per_scholar=max_pages_per_scholar,
+            page_size=page_size,
+        )
+        outcome = await self._resolve_scholar_outcome(
+            db_session,
+            run=run,
+            scholar=scholar,
+            run_dt=run_dt,
+            paged_parse_result=paged_parse_result,
+            result_entry=result_entry,
+        )
+        await self._sync_continuation_queue(
+            db_session,
+            user_id=user_id,
+            scholar=scholar,
+            run=run,
+            start_cstart=start_cstart,
+            result_entry=outcome.result_entry,
+            paged_parse_result=paged_parse_result,
+            auto_queue_continuations=auto_queue_continuations,
+            queue_delay_seconds=queue_delay_seconds,
+        )
+        return outcome
+
+    async def _fetch_and_prepare_scholar_result(
+        self,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        user_id: int,
+        start_cstart: int,
+        request_delay_seconds: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+        max_pages_per_scholar: int,
+        page_size: int,
+    ) -> tuple[datetime, PagedParseResult, dict[str, Any]]:
+        run_dt = datetime.now(timezone.utc)
+        paged_parse_result = await self._fetch_and_parse_all_pages_with_retry(
+            scholar_id=scholar.scholar_id,
+            start_cstart=start_cstart,
+            request_delay_seconds=request_delay_seconds,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            max_pages=max_pages_per_scholar,
+            page_size=page_size,
+            previous_initial_page_fingerprint_sha256=scholar.last_initial_page_fingerprint_sha256,
+        )
+        self._assert_valid_paged_parse_result(scholar_id=scholar.scholar_id, paged_parse_result=paged_parse_result)
+        self._apply_first_page_profile_metadata(scholar=scholar, paged_parse_result=paged_parse_result, run_dt=run_dt)
+        self._log_scholar_parsed(user_id=user_id, run_id=run.id, scholar=scholar, paged_parse_result=paged_parse_result)
+        result_entry = self._build_result_entry(
+            scholar=scholar,
+            start_cstart=start_cstart,
+            paged_parse_result=paged_parse_result,
+        )
+        return run_dt, paged_parse_result, result_entry
+
+    async def _resolve_scholar_outcome(
+        self,
+        db_session: AsyncSession,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        run_dt: datetime,
+        paged_parse_result: PagedParseResult,
+        result_entry: dict[str, Any],
+    ) -> ScholarProcessingOutcome:
+        if paged_parse_result.skipped_no_change:
+            return self._skipped_no_change_outcome(
+                scholar=scholar,
+                run_dt=run_dt,
+                paged_parse_result=paged_parse_result,
+                result_entry=result_entry,
+            )
+        return await self._upsert_publications_outcome(
+            db_session,
+            run=run,
+            scholar=scholar,
+            run_dt=run_dt,
+            paged_parse_result=paged_parse_result,
+            result_entry=result_entry,
+        )
+
+    @staticmethod
+    def _apply_outcome_to_progress(
+        *,
+        progress: RunProgress,
+        run: CrawlRun,
+        outcome: ScholarProcessingOutcome,
+    ) -> None:
+        progress.succeeded_count += outcome.succeeded_count_delta
+        progress.failed_count += outcome.failed_count_delta
+        progress.partial_count += outcome.partial_count_delta
+        run.new_pub_count = int(run.new_pub_count or 0) + outcome.discovered_publication_count
+        progress.scholar_results.append(outcome.result_entry)
+
+    def _unexpected_scholar_exception_outcome(
+        self,
+        *,
+        run: CrawlRun,
+        scholar: ScholarProfile,
+        start_cstart: int,
+        exc: Exception,
+    ) -> ScholarProcessingOutcome:
+        scholar.last_run_status = RunStatus.FAILED
+        scholar.last_run_dt = datetime.now(timezone.utc)
+        logger.exception(
+            "ingestion.scholar_unexpected_failure",
+            extra={
+                "event": "ingestion.scholar_unexpected_failure",
+                "crawl_run_id": run.id,
+                "scholar_profile_id": scholar.id,
+                "scholar_id": scholar.scholar_id,
+            },
+        )
+        return ScholarProcessingOutcome(
+            result_entry={
+                "scholar_profile_id": scholar.id,
+                "scholar_id": scholar.scholar_id,
+                "state": "ingestion_error",
+                "state_reason": "scholar_processing_exception",
+                "outcome": "failed",
+                "attempt_count": 0,
+                "publication_count": 0,
+                "start_cstart": start_cstart,
+                "warnings": [],
+                "error": str(exc),
+                "debug": {"exception_type": type(exc).__name__, "exception_message": str(exc)},
+            },
+            succeeded_count_delta=0,
+            failed_count_delta=1,
+            partial_count_delta=0,
+            discovered_publication_count=0,
+        )
+
+    @staticmethod
+    def _summarize_failures(
+        *,
+        scholar_results: list[dict[str, Any]],
+    ) -> RunFailureSummary:
         failed_state_counts: dict[str, int] = {}
         failed_reason_counts: dict[str, int] = {}
         scrape_failure_counts: dict[str, int] = {}
@@ -526,115 +925,161 @@ class ScholarIngestionService:
         scholars_with_retries_count = 0
         retry_exhausted_count = 0
         for entry in scholar_results:
-            attempt_count = max(0, _int_or_default(entry.get("attempt_count"), 0))
-            retries_for_entry = max(0, attempt_count - 1)
+            retries_for_entry = max(0, _int_or_default(entry.get("attempt_count"), 0) - 1)
             if retries_for_entry > 0:
                 retries_scheduled_count += retries_for_entry
                 scholars_with_retries_count += 1
-
-            outcome = str(entry.get("outcome", ""))
-            if outcome != "failed":
+            if str(entry.get("outcome", "")) != "failed":
                 continue
-
             state = str(entry.get("state", "")).strip()
             if state not in FAILED_STATES:
                 continue
             failed_state_counts[state] = failed_state_counts.get(state, 0) + 1
-
             reason = str(entry.get("state_reason", "")).strip()
             if reason:
                 failed_reason_counts[reason] = failed_reason_counts.get(reason, 0) + 1
-
-            failure_bucket = _classify_failure_bucket(state=state, state_reason=reason)
-            scrape_failure_counts[failure_bucket] = (
-                scrape_failure_counts.get(failure_bucket, 0) + 1
-            )
-
-            if (
-                state == ParseState.NETWORK_ERROR.value
-                and retries_for_entry > 0
-            ):
+            bucket = _classify_failure_bucket(state=state, state_reason=reason)
+            scrape_failure_counts[bucket] = scrape_failure_counts.get(bucket, 0) + 1
+            if state == ParseState.NETWORK_ERROR.value and retries_for_entry > 0:
                 retry_exhausted_count += 1
+        return RunFailureSummary(
+            failed_state_counts=failed_state_counts,
+            failed_reason_counts=failed_reason_counts,
+            scrape_failure_counts=scrape_failure_counts,
+            retries_scheduled_count=retries_scheduled_count,
+            scholars_with_retries_count=scholars_with_retries_count,
+            retry_exhausted_count=retry_exhausted_count,
+        )
 
-        blocked_failure_count = int(scrape_failure_counts.get(FAILURE_BUCKET_BLOCKED, 0))
-        network_failure_count = int(scrape_failure_counts.get(FAILURE_BUCKET_NETWORK, 0))
-
-        bounded_blocked_threshold = max(1, int(alert_blocked_failure_threshold))
-        bounded_network_threshold = max(1, int(alert_network_failure_threshold))
-        bounded_retry_threshold = max(1, int(alert_retry_scheduled_threshold))
+    @staticmethod
+    def _build_alert_summary(
+        *,
+        failure_summary: RunFailureSummary,
+        alert_blocked_failure_threshold: int,
+        alert_network_failure_threshold: int,
+        alert_retry_scheduled_threshold: int,
+    ) -> RunAlertSummary:
+        blocked_failure_count = int(failure_summary.scrape_failure_counts.get(FAILURE_BUCKET_BLOCKED, 0))
+        network_failure_count = int(failure_summary.scrape_failure_counts.get(FAILURE_BUCKET_NETWORK, 0))
+        blocked_threshold = max(1, int(alert_blocked_failure_threshold))
+        network_threshold = max(1, int(alert_network_failure_threshold))
+        retry_threshold = max(1, int(alert_retry_scheduled_threshold))
         alert_flags = {
-            "blocked_failure_threshold_exceeded": blocked_failure_count >= bounded_blocked_threshold,
-            "network_failure_threshold_exceeded": network_failure_count >= bounded_network_threshold,
-            "retry_scheduled_threshold_exceeded": retries_scheduled_count >= bounded_retry_threshold,
+            "blocked_failure_threshold_exceeded": blocked_failure_count >= blocked_threshold,
+            "network_failure_threshold_exceeded": network_failure_count >= network_threshold,
+            "retry_scheduled_threshold_exceeded": failure_summary.retries_scheduled_count >= retry_threshold,
         }
+        return RunAlertSummary(
+            blocked_failure_count=blocked_failure_count,
+            network_failure_count=network_failure_count,
+            blocked_failure_threshold=blocked_threshold,
+            network_failure_threshold=network_threshold,
+            retry_scheduled_threshold=retry_threshold,
+            alert_flags=alert_flags,
+        )
 
-        if alert_flags["blocked_failure_threshold_exceeded"]:
+    @staticmethod
+    def _log_alert_thresholds(
+        *,
+        user_id: int,
+        run_id: int,
+        failure_summary: RunFailureSummary,
+        alert_summary: RunAlertSummary,
+    ) -> None:
+        if alert_summary.alert_flags["blocked_failure_threshold_exceeded"]:
             logger.warning(
                 "ingestion.alert_blocked_failure_threshold_exceeded",
                 extra={
                     "event": "ingestion.alert_blocked_failure_threshold_exceeded",
                     "user_id": user_id,
-                    "crawl_run_id": run.id,
-                    "blocked_failure_count": blocked_failure_count,
-                    "threshold": bounded_blocked_threshold,
+                    "crawl_run_id": run_id,
+                    "blocked_failure_count": alert_summary.blocked_failure_count,
+                    "threshold": alert_summary.blocked_failure_threshold,
                     "metric_name": "ingestion_blocked_failure_threshold_exceeded_total",
                     "metric_value": 1,
                 },
             )
-        if alert_flags["network_failure_threshold_exceeded"]:
+        if alert_summary.alert_flags["network_failure_threshold_exceeded"]:
             logger.warning(
                 "ingestion.alert_network_failure_threshold_exceeded",
                 extra={
                     "event": "ingestion.alert_network_failure_threshold_exceeded",
                     "user_id": user_id,
-                    "crawl_run_id": run.id,
-                    "network_failure_count": network_failure_count,
-                    "threshold": bounded_network_threshold,
+                    "crawl_run_id": run_id,
+                    "network_failure_count": alert_summary.network_failure_count,
+                    "threshold": alert_summary.network_failure_threshold,
                     "metric_name": "ingestion_network_failure_threshold_exceeded_total",
                     "metric_value": 1,
                 },
             )
-        if alert_flags["retry_scheduled_threshold_exceeded"]:
+        if alert_summary.alert_flags["retry_scheduled_threshold_exceeded"]:
             logger.warning(
                 "ingestion.alert_retry_scheduled_threshold_exceeded",
                 extra={
                     "event": "ingestion.alert_retry_scheduled_threshold_exceeded",
                     "user_id": user_id,
-                    "crawl_run_id": run.id,
-                    "retries_scheduled_count": retries_scheduled_count,
-                    "threshold": bounded_retry_threshold,
+                    "crawl_run_id": run_id,
+                    "retries_scheduled_count": failure_summary.retries_scheduled_count,
+                    "threshold": alert_summary.retry_scheduled_threshold,
                     "metric_name": "ingestion_retry_scheduled_threshold_exceeded_total",
                     "metric_value": 1,
                 },
             )
 
-        pre_apply_safety_state = run_safety_service.get_safety_event_context(
+    @staticmethod
+    def _apply_safety_outcome(
+        *,
+        user_settings,
+        run: CrawlRun,
+        user_id: int,
+        alert_summary: RunAlertSummary,
+    ) -> None:
+        pre_apply_state = run_safety_service.get_safety_event_context(
             user_settings,
             now_utc=datetime.now(timezone.utc),
         )
         safety_state, cooldown_trigger_reason = run_safety_service.apply_run_safety_outcome(
             user_settings,
             run_id=int(run.id),
-            blocked_failure_count=blocked_failure_count,
-            network_failure_count=network_failure_count,
-            blocked_failure_threshold=bounded_blocked_threshold,
-            network_failure_threshold=bounded_network_threshold,
+            blocked_failure_count=alert_summary.blocked_failure_count,
+            network_failure_count=alert_summary.network_failure_count,
+            blocked_failure_threshold=alert_summary.blocked_failure_threshold,
+            network_failure_threshold=alert_summary.network_failure_threshold,
             blocked_cooldown_seconds=settings.ingestion_safety_cooldown_blocked_seconds,
             network_cooldown_seconds=settings.ingestion_safety_cooldown_network_seconds,
             now_utc=datetime.now(timezone.utc),
         )
+        ScholarIngestionService._log_safety_transition(
+            user_id=user_id,
+            run_id=int(run.id),
+            alert_summary=alert_summary,
+            pre_apply_state=pre_apply_state,
+            safety_state=safety_state,
+            cooldown_trigger_reason=cooldown_trigger_reason,
+        )
+
+    @staticmethod
+    def _log_safety_transition(
+        *,
+        user_id: int,
+        run_id: int,
+        alert_summary: RunAlertSummary,
+        pre_apply_state: dict[str, Any],
+        safety_state: dict[str, Any],
+        cooldown_trigger_reason: str | None,
+    ) -> None:
         if cooldown_trigger_reason is not None:
             logger.warning(
                 "ingestion.safety_cooldown_entered",
                 extra={
                     "event": "ingestion.safety_cooldown_entered",
                     "user_id": user_id,
-                    "crawl_run_id": run.id,
+                    "crawl_run_id": run_id,
                     "reason": cooldown_trigger_reason,
-                    "blocked_failure_count": blocked_failure_count,
-                    "network_failure_count": network_failure_count,
-                    "blocked_failure_threshold": bounded_blocked_threshold,
-                    "network_failure_threshold": bounded_network_threshold,
+                    "blocked_failure_count": alert_summary.blocked_failure_count,
+                    "network_failure_count": alert_summary.network_failure_count,
+                    "blocked_failure_threshold": alert_summary.blocked_failure_threshold,
+                    "network_failure_threshold": alert_summary.network_failure_threshold,
                     "cooldown_until": safety_state.get("cooldown_until"),
                     "cooldown_remaining_seconds": safety_state.get("cooldown_remaining_seconds"),
                     "safety_counters": safety_state.get("counters", {}),
@@ -642,56 +1087,71 @@ class ScholarIngestionService:
                     "metric_value": 1,
                 },
             )
-        elif pre_apply_safety_state.get("cooldown_active") and not safety_state.get("cooldown_active"):
+        elif pre_apply_state.get("cooldown_active") and not safety_state.get("cooldown_active"):
             logger.info(
                 "ingestion.safety_cooldown_cleared",
                 extra={
                     "event": "ingestion.safety_cooldown_cleared",
                     "user_id": user_id,
-                    "crawl_run_id": run.id,
-                    "reason": pre_apply_safety_state.get("cooldown_reason"),
-                    "cooldown_until": pre_apply_safety_state.get("cooldown_until"),
+                    "crawl_run_id": run_id,
+                    "reason": pre_apply_state.get("cooldown_reason"),
+                    "cooldown_until": pre_apply_state.get("cooldown_until"),
                     "metric_name": "ingestion_safety_cooldown_cleared_total",
                     "metric_value": 1,
                 },
             )
 
+    def _finalize_run_record(
+        self,
+        *,
+        run: CrawlRun,
+        scholars: list[ScholarProfile],
+        progress: RunProgress,
+        failure_summary: RunFailureSummary,
+        alert_summary: RunAlertSummary,
+        idempotency_key: str | None,
+    ) -> None:
         run.end_dt = datetime.now(timezone.utc)
         run.status = self._resolve_run_status(
             scholar_count=len(scholars),
-            succeeded_count=succeeded_count,
-            failed_count=failed_count,
-            partial_count=partial_count,
+            succeeded_count=progress.succeeded_count,
+            failed_count=progress.failed_count,
+            partial_count=progress.partial_count,
         )
         run.error_log = {
-            "scholar_results": scholar_results,
+            "scholar_results": progress.scholar_results,
             "summary": {
-                "succeeded_count": succeeded_count,
-                "failed_count": failed_count,
-                "partial_count": partial_count,
-                "failed_state_counts": failed_state_counts,
-                "failed_reason_counts": failed_reason_counts,
-                "scrape_failure_counts": scrape_failure_counts,
+                "succeeded_count": progress.succeeded_count,
+                "failed_count": progress.failed_count,
+                "partial_count": progress.partial_count,
+                "failed_state_counts": failure_summary.failed_state_counts,
+                "failed_reason_counts": failure_summary.failed_reason_counts,
+                "scrape_failure_counts": failure_summary.scrape_failure_counts,
                 "retry_counts": {
-                    "retries_scheduled_count": retries_scheduled_count,
-                    "scholars_with_retries_count": scholars_with_retries_count,
-                    "retry_exhausted_count": retry_exhausted_count,
+                    "retries_scheduled_count": failure_summary.retries_scheduled_count,
+                    "scholars_with_retries_count": failure_summary.scholars_with_retries_count,
+                    "retry_exhausted_count": failure_summary.retry_exhausted_count,
                 },
                 "alert_thresholds": {
-                    "blocked_failure_threshold": bounded_blocked_threshold,
-                    "network_failure_threshold": bounded_network_threshold,
-                    "retry_scheduled_threshold": bounded_retry_threshold,
+                    "blocked_failure_threshold": alert_summary.blocked_failure_threshold,
+                    "network_failure_threshold": alert_summary.network_failure_threshold,
+                    "retry_scheduled_threshold": alert_summary.retry_scheduled_threshold,
                 },
-                "alert_flags": alert_flags,
+                "alert_flags": alert_summary.alert_flags,
             },
-            "meta": {
-                "idempotency_key": idempotency_key,
-            }
-            if idempotency_key
-            else {},
+            "meta": {"idempotency_key": idempotency_key} if idempotency_key else {},
         }
 
-        await db_session.commit()
+    @staticmethod
+    def _log_run_completed(
+        *,
+        user_id: int,
+        run: CrawlRun,
+        scholars: list[ScholarProfile],
+        progress: RunProgress,
+        alert_summary: RunAlertSummary,
+        failure_summary: RunFailureSummary,
+    ) -> None:
         logger.info(
             "ingestion.run_completed",
             extra={
@@ -700,26 +1160,251 @@ class ScholarIngestionService:
                 "crawl_run_id": run.id,
                 "status": run.status.value,
                 "scholar_count": len(scholars),
-                "succeeded_count": succeeded_count,
-                "failed_count": failed_count,
-                "partial_count": partial_count,
+                "succeeded_count": progress.succeeded_count,
+                "failed_count": progress.failed_count,
+                "partial_count": progress.partial_count,
                 "new_publication_count": run.new_pub_count,
-                "blocked_failure_count": blocked_failure_count,
-                "network_failure_count": network_failure_count,
-                "retries_scheduled_count": retries_scheduled_count,
-                "alert_flags": alert_flags,
+                "blocked_failure_count": alert_summary.blocked_failure_count,
+                "network_failure_count": alert_summary.network_failure_count,
+                "retries_scheduled_count": failure_summary.retries_scheduled_count,
+                "alert_flags": alert_summary.alert_flags,
             },
         )
 
+    @staticmethod
+    def _paging_kwargs(
+        *,
+        request_delay_seconds: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+        max_pages_per_scholar: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        return {
+            "request_delay_seconds": request_delay_seconds,
+            "network_error_retries": network_error_retries,
+            "retry_backoff_seconds": retry_backoff_seconds,
+            "max_pages_per_scholar": max_pages_per_scholar,
+            "page_size": page_size,
+        }
+
+    @staticmethod
+    def _threshold_kwargs(
+        *,
+        alert_blocked_failure_threshold: int,
+        alert_network_failure_threshold: int,
+        alert_retry_scheduled_threshold: int,
+    ) -> dict[str, Any]:
+        return {
+            "alert_blocked_failure_threshold": alert_blocked_failure_threshold,
+            "alert_network_failure_threshold": alert_network_failure_threshold,
+            "alert_retry_scheduled_threshold": alert_retry_scheduled_threshold,
+        }
+
+    @staticmethod
+    def _run_execution_summary(
+        *,
+        run: CrawlRun,
+        scholars: list[ScholarProfile],
+        progress: RunProgress,
+    ) -> RunExecutionSummary:
         return RunExecutionSummary(
             crawl_run_id=run.id,
             status=run.status,
             scholar_count=len(scholars),
-            succeeded_count=succeeded_count,
-            failed_count=failed_count,
-            partial_count=partial_count,
+            succeeded_count=progress.succeeded_count,
+            failed_count=progress.failed_count,
+            partial_count=progress.partial_count,
             new_publication_count=run.new_pub_count,
         )
+
+    async def _initialize_run_for_user(self, db_session: AsyncSession, *, user_id: int, trigger_type: RunTriggerType, scholar_profile_ids: set[int] | None, start_cstart_by_scholar_id: dict[int, int] | None, request_delay_seconds: int, network_error_retries: int, retry_backoff_seconds: float, max_pages_per_scholar: int, page_size: int, idempotency_key: str | None, alert_blocked_failure_threshold: int, alert_network_failure_threshold: int, alert_retry_scheduled_threshold: int) -> tuple[Any, CrawlRun, list[ScholarProfile], dict[int, int]]:
+        user_settings = await self._load_user_settings_for_run(
+            db_session,
+            user_id=user_id,
+            trigger_type=trigger_type,
+        )
+        if not await self._try_acquire_user_lock(db_session, user_id=user_id):
+            raise RunAlreadyInProgressError(f"Run already in progress for user_id={user_id}.")
+        filtered_scholar_ids, start_cstart_map = self._normalize_run_targets(
+            scholar_profile_ids=scholar_profile_ids,
+            start_cstart_by_scholar_id=start_cstart_by_scholar_id,
+        )
+        scholars = await self._load_target_scholars(
+            db_session,
+            user_id=user_id,
+            filtered_scholar_ids=filtered_scholar_ids,
+        )
+        run = await self._start_run_record_for_targets(
+            db_session,
+            user_id=user_id,
+            trigger_type=trigger_type,
+            scholars=scholars,
+            filtered=filtered_scholar_ids is not None,
+            request_delay_seconds=request_delay_seconds,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            max_pages_per_scholar=max_pages_per_scholar,
+            page_size=page_size,
+            idempotency_key=idempotency_key,
+            alert_blocked_failure_threshold=alert_blocked_failure_threshold,
+            alert_network_failure_threshold=alert_network_failure_threshold,
+            alert_retry_scheduled_threshold=alert_retry_scheduled_threshold,
+        )
+        return user_settings, run, scholars, start_cstart_map
+
+    async def _start_run_record_for_targets(
+        self,
+        db_session: AsyncSession,
+        *,
+        user_id: int,
+        trigger_type: RunTriggerType,
+        scholars: list[ScholarProfile],
+        filtered: bool,
+        request_delay_seconds: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+        max_pages_per_scholar: int,
+        page_size: int,
+        idempotency_key: str | None,
+        alert_blocked_failure_threshold: int,
+        alert_network_failure_threshold: int,
+        alert_retry_scheduled_threshold: int,
+    ) -> CrawlRun:
+        self._log_run_started(
+            user_id=user_id,
+            trigger_type=trigger_type,
+            scholar_count=len(scholars),
+            filtered=filtered,
+            request_delay_seconds=request_delay_seconds,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            max_pages_per_scholar=max_pages_per_scholar,
+            page_size=page_size,
+            idempotency_key=idempotency_key,
+            alert_blocked_failure_threshold=alert_blocked_failure_threshold,
+            alert_network_failure_threshold=alert_network_failure_threshold,
+            alert_retry_scheduled_threshold=alert_retry_scheduled_threshold,
+        )
+        run = self._create_running_run(
+            user_id=user_id,
+            trigger_type=trigger_type,
+            scholar_count=len(scholars),
+            idempotency_key=idempotency_key,
+        )
+        db_session.add(run)
+        await db_session.flush()
+        return run
+
+    async def _run_scholar_iteration(
+        self,
+        db_session: AsyncSession,
+        *,
+        run: CrawlRun,
+        scholars: list[ScholarProfile],
+        user_id: int,
+        start_cstart_map: dict[int, int],
+        request_delay_seconds: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+        max_pages_per_scholar: int,
+        page_size: int,
+        auto_queue_continuations: bool,
+        queue_delay_seconds: int,
+    ) -> RunProgress:
+        progress = RunProgress()
+        for index, scholar in enumerate(scholars):
+            await self._wait_between_scholars(index=index, request_delay_seconds=request_delay_seconds)
+            start_cstart = int(start_cstart_map.get(int(scholar.id), 0))
+            outcome = await self._process_scholar(
+                db_session,
+                run=run,
+                scholar=scholar,
+                user_id=user_id,
+                request_delay_seconds=request_delay_seconds,
+                network_error_retries=network_error_retries,
+                retry_backoff_seconds=retry_backoff_seconds,
+                max_pages_per_scholar=max_pages_per_scholar,
+                page_size=page_size,
+                start_cstart=start_cstart,
+                auto_queue_continuations=auto_queue_continuations,
+                queue_delay_seconds=queue_delay_seconds,
+            )
+            self._apply_outcome_to_progress(progress=progress, run=run, outcome=outcome)
+        return progress
+
+    def _complete_run_for_user(
+        self,
+        *,
+        user_settings: Any,
+        run: CrawlRun,
+        scholars: list[ScholarProfile],
+        user_id: int,
+        progress: RunProgress,
+        idempotency_key: str | None,
+        alert_blocked_failure_threshold: int,
+        alert_network_failure_threshold: int,
+        alert_retry_scheduled_threshold: int,
+    ) -> tuple[RunFailureSummary, RunAlertSummary]:
+        failure_summary = self._summarize_failures(scholar_results=progress.scholar_results)
+        alert_summary = self._build_alert_summary(
+            failure_summary=failure_summary,
+            alert_blocked_failure_threshold=alert_blocked_failure_threshold,
+            alert_network_failure_threshold=alert_network_failure_threshold,
+            alert_retry_scheduled_threshold=alert_retry_scheduled_threshold,
+        )
+        self._log_alert_thresholds(
+            user_id=user_id,
+            run_id=int(run.id),
+            failure_summary=failure_summary,
+            alert_summary=alert_summary,
+        )
+        self._apply_safety_outcome(user_settings=user_settings, run=run, user_id=user_id, alert_summary=alert_summary)
+        self._finalize_run_record(
+            run=run,
+            scholars=scholars,
+            progress=progress,
+            failure_summary=failure_summary,
+            alert_summary=alert_summary,
+            idempotency_key=idempotency_key,
+        )
+        return failure_summary, alert_summary
+
+    async def run_for_user(self, db_session: AsyncSession, *, user_id: int, trigger_type: RunTriggerType, request_delay_seconds: int, network_error_retries: int = 1, retry_backoff_seconds: float = 1.0, max_pages_per_scholar: int = 30, page_size: int = 100, scholar_profile_ids: set[int] | None = None, start_cstart_by_scholar_id: dict[int, int] | None = None, auto_queue_continuations: bool = True, queue_delay_seconds: int = 60, idempotency_key: str | None = None, alert_blocked_failure_threshold: int = 1, alert_network_failure_threshold: int = 2, alert_retry_scheduled_threshold: int = 3) -> RunExecutionSummary:
+        paging_kwargs = self._paging_kwargs(request_delay_seconds=request_delay_seconds, network_error_retries=network_error_retries, retry_backoff_seconds=retry_backoff_seconds, max_pages_per_scholar=max_pages_per_scholar, page_size=page_size)
+        threshold_kwargs = self._threshold_kwargs(alert_blocked_failure_threshold=alert_blocked_failure_threshold, alert_network_failure_threshold=alert_network_failure_threshold, alert_retry_scheduled_threshold=alert_retry_scheduled_threshold)
+        user_settings, run, scholars, start_cstart_map = await self._initialize_run_for_user(
+            db_session,
+            user_id=user_id,
+            trigger_type=trigger_type,
+            scholar_profile_ids=scholar_profile_ids,
+            start_cstart_by_scholar_id=start_cstart_by_scholar_id,
+            idempotency_key=idempotency_key,
+            **paging_kwargs,
+            **threshold_kwargs,
+        )
+        progress = await self._run_scholar_iteration(
+            db_session,
+            run=run,
+            scholars=scholars,
+            user_id=user_id,
+            start_cstart_map=start_cstart_map,
+            auto_queue_continuations=auto_queue_continuations,
+            queue_delay_seconds=queue_delay_seconds,
+            **paging_kwargs,
+        )
+        failure_summary, alert_summary = self._complete_run_for_user(
+            user_settings=user_settings,
+            run=run,
+            scholars=scholars,
+            user_id=user_id,
+            progress=progress,
+            idempotency_key=idempotency_key,
+            **threshold_kwargs,
+        )
+        await db_session.commit()
+        self._log_run_completed(user_id=user_id, run=run, scholars=scholars, progress=progress, alert_summary=alert_summary, failure_summary=failure_summary)
+        return self._run_execution_summary(run=run, scholars=scholars, progress=progress)
 
     async def _fetch_profile_page(
         self,
@@ -769,6 +1454,57 @@ class ScholarIngestionService:
                 error=str(exc),
             )
 
+    @staticmethod
+    def _attempt_log_entry(
+        *,
+        attempt: int,
+        cstart: int,
+        fetch_result: FetchResult,
+        parsed_page: ParsedProfilePage,
+    ) -> dict[str, Any]:
+        return {
+            "attempt": attempt,
+            "cstart": cstart,
+            "state": parsed_page.state.value,
+            "state_reason": parsed_page.state_reason,
+            "status_code": fetch_result.status_code,
+            "fetch_error": fetch_result.error,
+        }
+
+    @staticmethod
+    def _should_retry_network_page(
+        *,
+        parsed_page: ParsedProfilePage,
+        attempt_index: int,
+        max_attempts: int,
+    ) -> bool:
+        return parsed_page.state == ParseState.NETWORK_ERROR and attempt_index < max_attempts - 1
+
+    @staticmethod
+    async def _sleep_retry_backoff(
+        *,
+        scholar_id: str,
+        cstart: int,
+        attempt_index: int,
+        backoff: float,
+        state_reason: str,
+    ) -> None:
+        sleep_seconds = backoff * (2**attempt_index)
+        logger.warning(
+            "ingestion.scholar_retry_scheduled",
+            extra={
+                "event": "ingestion.scholar_retry_scheduled",
+                "scholar_id": scholar_id,
+                "cstart": cstart,
+                "attempt": attempt_index + 1,
+                "next_attempt": attempt_index + 2,
+                "sleep_seconds": sleep_seconds,
+                "state_reason": state_reason,
+            },
+        )
+        if sleep_seconds > 0:
+            await asyncio.sleep(sleep_seconds)
+
     async def _fetch_and_parse_page_with_retry(
         self,
         *,
@@ -792,228 +1528,404 @@ class ScholarIngestionService:
             )
             parsed_page = parse_profile_page(fetch_result)
             attempt_log.append(
-                {
-                    "attempt": attempt_index + 1,
-                    "cstart": cstart,
-                    "state": parsed_page.state.value,
-                    "state_reason": parsed_page.state_reason,
-                    "status_code": fetch_result.status_code,
-                    "fetch_error": fetch_result.error,
-                }
+                self._attempt_log_entry(
+                    attempt=attempt_index + 1,
+                    cstart=cstart,
+                    fetch_result=fetch_result,
+                    parsed_page=parsed_page,
+                )
             )
-
-            should_retry = (
-                parsed_page.state == ParseState.NETWORK_ERROR
-                and attempt_index < max_attempts - 1
-            )
-            if not should_retry:
+            if not self._should_retry_network_page(
+                parsed_page=parsed_page,
+                attempt_index=attempt_index,
+                max_attempts=max_attempts,
+            ):
                 break
-
-            sleep_seconds = backoff * (2**attempt_index)
-            logger.warning(
-                "ingestion.scholar_retry_scheduled",
-                extra={
-                    "event": "ingestion.scholar_retry_scheduled",
-                    "scholar_id": scholar_id,
-                    "cstart": cstart,
-                    "attempt": attempt_index + 1,
-                    "next_attempt": attempt_index + 2,
-                    "sleep_seconds": sleep_seconds,
-                    "state_reason": parsed_page.state_reason,
-                },
+            await self._sleep_retry_backoff(
+                scholar_id=scholar_id,
+                cstart=cstart,
+                attempt_index=attempt_index,
+                backoff=backoff,
+                state_reason=parsed_page.state_reason,
             )
-            if sleep_seconds > 0:
-                await asyncio.sleep(sleep_seconds)
 
         if fetch_result is None or parsed_page is None:
             raise RuntimeError("Fetch-and-parse retry loop produced no result.")
         return fetch_result, parsed_page, attempt_log
 
-    async def _fetch_and_parse_all_pages_with_retry(
-        self,
+    @staticmethod
+    def _page_log_entry(
         *,
-        scholar_id: str,
+        page_number: int,
+        cstart: int,
+        fetch_result: FetchResult,
+        parsed_page: ParsedProfilePage,
+        attempt_count: int,
+    ) -> dict[str, Any]:
+        return {
+            "page": page_number,
+            "cstart": cstart,
+            "state": parsed_page.state.value,
+            "state_reason": parsed_page.state_reason,
+            "status_code": fetch_result.status_code,
+            "publication_count": len(parsed_page.publications),
+            "articles_range": parsed_page.articles_range,
+            "has_show_more_button": parsed_page.has_show_more_button,
+            "warning_codes": parsed_page.warnings,
+            "attempt_count": attempt_count,
+        }
+
+    @staticmethod
+    def _should_skip_no_change(
+        *,
         start_cstart: int,
-        request_delay_seconds: int,
-        network_error_retries: int,
-        retry_backoff_seconds: float,
-        max_pages: int,
-        page_size: int,
-        previous_initial_page_fingerprint_sha256: str | None = None,
-    ) -> PagedParseResult:
-        bounded_max_pages = max(1, int(max_pages))
-        bounded_page_size = max(1, int(page_size))
-
-        (
-            fetch_result,
-            parsed_page,
-            first_attempt_log,
-        ) = await self._fetch_and_parse_page_with_retry(
-            scholar_id=scholar_id,
-            cstart=start_cstart,
-            page_size=bounded_page_size,
-            network_error_retries=network_error_retries,
-            retry_backoff_seconds=retry_backoff_seconds,
-        )
-        first_page_fetch_result = fetch_result
-        first_page_parsed_page = parsed_page
-        first_page_fingerprint_sha256 = build_initial_page_fingerprint(parsed_page)
-
-        attempt_log: list[dict[str, Any]] = list(first_attempt_log)
-        page_logs: list[dict[str, Any]] = []
-        page_logs.append(
-            {
-                "page": 1,
-                "cstart": start_cstart,
-                "state": parsed_page.state.value,
-                "state_reason": parsed_page.state_reason,
-                "status_code": fetch_result.status_code,
-                "publication_count": len(parsed_page.publications),
-                "articles_range": parsed_page.articles_range,
-                "has_show_more_button": parsed_page.has_show_more_button,
-                "warning_codes": parsed_page.warnings,
-                "attempt_count": len(first_attempt_log),
-            }
-        )
-        pages_attempted = 1
-
-        should_skip_no_change = (
+        first_page_fingerprint_sha256: str | None,
+        previous_initial_page_fingerprint_sha256: str | None,
+        parsed_page: ParsedProfilePage,
+    ) -> bool:
+        return (
             start_cstart <= 0
             and first_page_fingerprint_sha256 is not None
             and previous_initial_page_fingerprint_sha256 is not None
             and first_page_fingerprint_sha256 == previous_initial_page_fingerprint_sha256
             and parsed_page.state in {ParseState.OK, ParseState.NO_RESULTS}
         )
-        if should_skip_no_change:
-            return PagedParseResult(
-                fetch_result=fetch_result,
-                parsed_page=parsed_page,
-                first_page_fetch_result=first_page_fetch_result,
-                first_page_parsed_page=first_page_parsed_page,
-                first_page_fingerprint_sha256=first_page_fingerprint_sha256,
-                publications=[],
-                attempt_log=attempt_log,
-                page_logs=page_logs,
-                pages_fetched=1,
-                pages_attempted=pages_attempted,
-                has_more_remaining=False,
-                pagination_truncated_reason=None,
-                continuation_cstart=None,
-                skipped_no_change=True,
-            )
 
-        # Immediate hard failure: nothing to salvage.
-        if parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}:
-            return PagedParseResult(
-                fetch_result=fetch_result,
-                parsed_page=parsed_page,
-                first_page_fetch_result=first_page_fetch_result,
-                first_page_parsed_page=first_page_parsed_page,
-                first_page_fingerprint_sha256=first_page_fingerprint_sha256,
-                publications=[],
-                attempt_log=attempt_log,
-                page_logs=page_logs,
-                pages_fetched=0,
-                pages_attempted=pages_attempted,
-                has_more_remaining=False,
-                pagination_truncated_reason=None,
-                continuation_cstart=(
-                    start_cstart if parsed_page.state == ParseState.NETWORK_ERROR else None
-                ),
-                skipped_no_change=False,
-            )
-
-        publications = list(parsed_page.publications)
-        pages_fetched = 1
-        has_more_remaining = False
-        pagination_truncated_reason: str | None = None
-        continuation_cstart: int | None = None
-        current_cstart = start_cstart
-        next_cstart = _next_cstart_value(
-            articles_range=parsed_page.articles_range,
-            fallback=current_cstart + len(parsed_page.publications),
-        )
-
-        while parsed_page.has_show_more_button:
-            if pages_fetched >= bounded_max_pages:
-                has_more_remaining = True
-                pagination_truncated_reason = "max_pages_reached"
-                continuation_cstart = next_cstart if next_cstart > current_cstart else current_cstart
-                break
-            if next_cstart <= current_cstart:
-                has_more_remaining = True
-                pagination_truncated_reason = "pagination_cursor_stalled"
-                continuation_cstart = current_cstart
-                break
-            if request_delay_seconds > 0:
-                await asyncio.sleep(float(request_delay_seconds))
-
-            current_cstart = next_cstart
-            (
-                page_fetch_result,
-                page_parsed,
-                page_attempt_log,
-            ) = await self._fetch_and_parse_page_with_retry(
-                scholar_id=scholar_id,
-                cstart=current_cstart,
-                page_size=bounded_page_size,
-                network_error_retries=network_error_retries,
-                retry_backoff_seconds=retry_backoff_seconds,
-            )
-
-            pages_attempted += 1
-            attempt_log.extend(page_attempt_log)
-            page_logs.append(
-                {
-                    "page": pages_attempted,
-                    "cstart": current_cstart,
-                    "state": page_parsed.state.value,
-                    "state_reason": page_parsed.state_reason,
-                    "status_code": page_fetch_result.status_code,
-                    "publication_count": len(page_parsed.publications),
-                    "articles_range": page_parsed.articles_range,
-                    "has_show_more_button": page_parsed.has_show_more_button,
-                    "warning_codes": page_parsed.warnings,
-                    "attempt_count": len(page_attempt_log),
-                }
-            )
-
-            fetch_result = page_fetch_result
-            parsed_page = page_parsed
-            if parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}:
-                has_more_remaining = True
-                pagination_truncated_reason = f"page_state_{parsed_page.state.value}"
-                continuation_cstart = current_cstart
-                break
-
-            # Google may keep a stale/disabled "show more" marker while returning an empty tail page.
-            # Treat this as a terminal page to avoid false cursor-stalled partial runs.
-            if parsed_page.state == ParseState.NO_RESULTS and len(parsed_page.publications) == 0:
-                pages_fetched += 1
-                break
-
-            pages_fetched += 1
-            publications.extend(parsed_page.publications)
-            next_cstart = _next_cstart_value(
-                articles_range=parsed_page.articles_range,
-                fallback=current_cstart + len(parsed_page.publications),
-            )
-
+    @staticmethod
+    def _skip_no_change_result(
+        *,
+        fetch_result: FetchResult,
+        parsed_page: ParsedProfilePage,
+        first_page_fingerprint_sha256: str | None,
+        attempt_log: list[dict[str, Any]],
+        page_logs: list[dict[str, Any]],
+    ) -> PagedParseResult:
         return PagedParseResult(
             fetch_result=fetch_result,
             parsed_page=parsed_page,
+            first_page_fetch_result=fetch_result,
+            first_page_parsed_page=parsed_page,
+            first_page_fingerprint_sha256=first_page_fingerprint_sha256,
+            publications=[],
+            attempt_log=attempt_log,
+            page_logs=page_logs,
+            pages_fetched=1,
+            pages_attempted=1,
+            has_more_remaining=False,
+            pagination_truncated_reason=None,
+            continuation_cstart=None,
+            skipped_no_change=True,
+        )
+
+    @staticmethod
+    def _initial_failure_result(
+        *,
+        fetch_result: FetchResult,
+        parsed_page: ParsedProfilePage,
+        first_page_fingerprint_sha256: str | None,
+        start_cstart: int,
+        attempt_log: list[dict[str, Any]],
+        page_logs: list[dict[str, Any]],
+    ) -> PagedParseResult:
+        continuation_cstart = start_cstart if parsed_page.state == ParseState.NETWORK_ERROR else None
+        return PagedParseResult(
+            fetch_result=fetch_result,
+            parsed_page=parsed_page,
+            first_page_fetch_result=fetch_result,
+            first_page_parsed_page=parsed_page,
+            first_page_fingerprint_sha256=first_page_fingerprint_sha256,
+            publications=[],
+            attempt_log=attempt_log,
+            page_logs=page_logs,
+            pages_fetched=0,
+            pages_attempted=1,
+            has_more_remaining=False,
+            pagination_truncated_reason=None,
+            continuation_cstart=continuation_cstart,
+            skipped_no_change=False,
+        )
+
+    @staticmethod
+    def _build_loop_state(
+        *,
+        start_cstart: int,
+        fetch_result: FetchResult,
+        parsed_page: ParsedProfilePage,
+        attempt_log: list[dict[str, Any]],
+        page_logs: list[dict[str, Any]],
+    ) -> PagedLoopState:
+        next_cstart = _next_cstart_value(
+            articles_range=parsed_page.articles_range,
+            fallback=start_cstart + len(parsed_page.publications),
+        )
+        return PagedLoopState(
+            fetch_result=fetch_result,
+            parsed_page=parsed_page,
+            attempt_log=attempt_log,
+            page_logs=page_logs,
+            publications=list(parsed_page.publications),
+            pages_fetched=1,
+            pages_attempted=1,
+            current_cstart=start_cstart,
+            next_cstart=next_cstart,
+        )
+
+    @staticmethod
+    def _set_truncated_state(
+        *,
+        state: PagedLoopState,
+        reason: str,
+        continuation_cstart: int,
+    ) -> None:
+        state.has_more_remaining = True
+        state.pagination_truncated_reason = reason
+        state.continuation_cstart = continuation_cstart
+
+    def _should_stop_pagination(self, *, state: PagedLoopState, bounded_max_pages: int) -> bool:
+        if state.pages_fetched >= bounded_max_pages:
+            self._set_truncated_state(
+                state=state,
+                reason="max_pages_reached",
+                continuation_cstart=(
+                    state.next_cstart if state.next_cstart > state.current_cstart else state.current_cstart
+                ),
+            )
+            return True
+        if state.next_cstart <= state.current_cstart:
+            self._set_truncated_state(
+                state=state,
+                reason="pagination_cursor_stalled",
+                continuation_cstart=state.current_cstart,
+            )
+            return True
+        return False
+
+    async def _fetch_next_page(
+        self,
+        *,
+        scholar_id: str,
+        state: PagedLoopState,
+        request_delay_seconds: int,
+        bounded_page_size: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+    ) -> tuple[FetchResult, ParsedProfilePage, list[dict[str, Any]]]:
+        if request_delay_seconds > 0:
+            await asyncio.sleep(float(request_delay_seconds))
+        state.current_cstart = state.next_cstart
+        return await self._fetch_and_parse_page_with_retry(
+            scholar_id=scholar_id,
+            cstart=state.current_cstart,
+            page_size=bounded_page_size,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
+
+    @staticmethod
+    def _record_next_page(
+        *,
+        state: PagedLoopState,
+        fetch_result: FetchResult,
+        parsed_page: ParsedProfilePage,
+        page_attempt_log: list[dict[str, Any]],
+    ) -> None:
+        state.pages_attempted += 1
+        state.attempt_log.extend(page_attempt_log)
+        state.page_logs.append(
+            ScholarIngestionService._page_log_entry(
+                page_number=state.pages_attempted,
+                cstart=state.current_cstart,
+                fetch_result=fetch_result,
+                parsed_page=parsed_page,
+                attempt_count=len(page_attempt_log),
+            )
+        )
+        state.fetch_result = fetch_result
+        state.parsed_page = parsed_page
+
+    @staticmethod
+    def _handle_page_state_transition(*, state: PagedLoopState) -> bool:
+        if state.parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}:
+            ScholarIngestionService._set_truncated_state(
+                state=state,
+                reason=f"page_state_{state.parsed_page.state.value}",
+                continuation_cstart=state.current_cstart,
+            )
+            return True
+        if state.parsed_page.state == ParseState.NO_RESULTS and len(state.parsed_page.publications) == 0:
+            state.pages_fetched += 1
+            return True
+        state.pages_fetched += 1
+        state.publications.extend(state.parsed_page.publications)
+        state.next_cstart = _next_cstart_value(
+            articles_range=state.parsed_page.articles_range,
+            fallback=state.current_cstart + len(state.parsed_page.publications),
+        )
+        return False
+
+    async def _fetch_initial_page_context(
+        self,
+        *,
+        scholar_id: str,
+        start_cstart: int,
+        bounded_page_size: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+    ) -> tuple[FetchResult, ParsedProfilePage, str | None, list[dict[str, Any]], list[dict[str, Any]]]:
+        fetch_result, parsed_page, first_attempt_log = await self._fetch_and_parse_page_with_retry(
+            scholar_id=scholar_id,
+            cstart=start_cstart,
+            page_size=bounded_page_size,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
+        first_page_fingerprint_sha256 = build_initial_page_fingerprint(parsed_page)
+        attempt_log = list(first_attempt_log)
+        page_logs = [
+            self._page_log_entry(
+                page_number=1,
+                cstart=start_cstart,
+                fetch_result=fetch_result,
+                parsed_page=parsed_page,
+                attempt_count=len(first_attempt_log),
+            )
+        ]
+        return fetch_result, parsed_page, first_page_fingerprint_sha256, attempt_log, page_logs
+
+    async def _paginate_loop(
+        self,
+        *,
+        scholar_id: str,
+        state: PagedLoopState,
+        bounded_max_pages: int,
+        request_delay_seconds: int,
+        bounded_page_size: int,
+        network_error_retries: int,
+        retry_backoff_seconds: float,
+    ) -> None:
+        while state.parsed_page.has_show_more_button:
+            if self._should_stop_pagination(state=state, bounded_max_pages=bounded_max_pages):
+                return
+            next_fetch_result, next_parsed_page, next_attempt_log = await self._fetch_next_page(
+                scholar_id=scholar_id,
+                state=state,
+                request_delay_seconds=request_delay_seconds,
+                bounded_page_size=bounded_page_size,
+                network_error_retries=network_error_retries,
+                retry_backoff_seconds=retry_backoff_seconds,
+            )
+            self._record_next_page(
+                state=state,
+                fetch_result=next_fetch_result,
+                parsed_page=next_parsed_page,
+                page_attempt_log=next_attempt_log,
+            )
+            if self._handle_page_state_transition(state=state):
+                return
+
+    @staticmethod
+    def _result_from_pagination_state(
+        *,
+        state: PagedLoopState,
+        first_page_fetch_result: FetchResult,
+        first_page_parsed_page: ParsedProfilePage,
+        first_page_fingerprint_sha256: str | None,
+    ) -> PagedParseResult:
+        return PagedParseResult(
+            fetch_result=state.fetch_result,
+            parsed_page=state.parsed_page,
             first_page_fetch_result=first_page_fetch_result,
             first_page_parsed_page=first_page_parsed_page,
             first_page_fingerprint_sha256=first_page_fingerprint_sha256,
-            publications=_dedupe_publication_candidates(publications),
+            publications=_dedupe_publication_candidates(state.publications),
+            attempt_log=state.attempt_log,
+            page_logs=state.page_logs,
+            pages_fetched=state.pages_fetched,
+            pages_attempted=state.pages_attempted,
+            has_more_remaining=state.has_more_remaining,
+            pagination_truncated_reason=state.pagination_truncated_reason,
+            continuation_cstart=state.continuation_cstart,
+            skipped_no_change=False,
+        )
+
+    def _short_circuit_initial_page(
+        self,
+        *,
+        start_cstart: int,
+        previous_initial_page_fingerprint_sha256: str | None,
+        fetch_result: FetchResult,
+        parsed_page: ParsedProfilePage,
+        first_page_fingerprint_sha256: str | None,
+        attempt_log: list[dict[str, Any]],
+        page_logs: list[dict[str, Any]],
+    ) -> PagedParseResult | None:
+        if self._should_skip_no_change(
+            start_cstart=start_cstart,
+            first_page_fingerprint_sha256=first_page_fingerprint_sha256,
+            previous_initial_page_fingerprint_sha256=previous_initial_page_fingerprint_sha256,
+            parsed_page=parsed_page,
+        ):
+            return self._skip_no_change_result(
+                fetch_result=fetch_result,
+                parsed_page=parsed_page,
+                first_page_fingerprint_sha256=first_page_fingerprint_sha256,
+                attempt_log=attempt_log,
+                page_logs=page_logs,
+            )
+        if parsed_page.state not in {ParseState.OK, ParseState.NO_RESULTS}:
+            return self._initial_failure_result(
+                fetch_result=fetch_result,
+                parsed_page=parsed_page,
+                first_page_fingerprint_sha256=first_page_fingerprint_sha256,
+                start_cstart=start_cstart,
+                attempt_log=attempt_log,
+                page_logs=page_logs,
+            )
+        return None
+
+    async def _fetch_and_parse_all_pages_with_retry(self, *, scholar_id: str, start_cstart: int, request_delay_seconds: int, network_error_retries: int, retry_backoff_seconds: float, max_pages: int, page_size: int, previous_initial_page_fingerprint_sha256: str | None = None) -> PagedParseResult:
+        bounded_max_pages = max(1, int(max_pages))
+        bounded_page_size = max(1, int(page_size))
+        fetch_result, parsed_page, first_page_fingerprint_sha256, attempt_log, page_logs = (
+            await self._fetch_initial_page_context(
+            scholar_id=scholar_id,
+            start_cstart=start_cstart,
+            bounded_page_size=bounded_page_size,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        ))
+        shortcut_result = self._short_circuit_initial_page(
+            start_cstart=start_cstart,
+            previous_initial_page_fingerprint_sha256=previous_initial_page_fingerprint_sha256,
+            fetch_result=fetch_result,
+            parsed_page=parsed_page,
+            first_page_fingerprint_sha256=first_page_fingerprint_sha256,
             attempt_log=attempt_log,
             page_logs=page_logs,
-            pages_fetched=pages_fetched,
-            pages_attempted=pages_attempted,
-            has_more_remaining=has_more_remaining,
-            pagination_truncated_reason=pagination_truncated_reason,
-            continuation_cstart=continuation_cstart,
-            skipped_no_change=False,
+        )
+        if shortcut_result is not None:
+            return shortcut_result
+        state = self._build_loop_state(
+            start_cstart=start_cstart,
+            fetch_result=fetch_result,
+            parsed_page=parsed_page,
+            attempt_log=attempt_log,
+            page_logs=page_logs,
+        )
+        await self._paginate_loop(
+            scholar_id=scholar_id,
+            state=state,
+            bounded_max_pages=bounded_max_pages,
+            request_delay_seconds=request_delay_seconds,
+            bounded_page_size=bounded_page_size,
+            network_error_retries=network_error_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
+        return self._result_from_pagination_state(
+            state=state,
+            first_page_fetch_result=fetch_result,
+            first_page_parsed_page=parsed_page,
+            first_page_fingerprint_sha256=first_page_fingerprint_sha256,
         )
 
     async def _upsert_profile_publications(
@@ -1067,57 +1979,84 @@ class ScholarIngestionService:
 
         return discovered_count
 
-    async def _resolve_publication(
+    @staticmethod
+    def _validate_publication_candidate(candidate: PublicationCandidate) -> None:
+        if not candidate.title.strip():
+            raise RuntimeError("Publication candidate is missing title.")
+        if candidate.citation_count is not None and int(candidate.citation_count) < 0:
+            raise RuntimeError("Publication candidate has negative citation_count.")
+
+    async def _find_publication_by_cluster(
         self,
         db_session: AsyncSession,
+        *,
+        cluster_id: str | None,
+    ) -> Publication | None:
+        if not cluster_id:
+            return None
+        result = await db_session.execute(
+            select(Publication).where(Publication.cluster_id == cluster_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def _find_publication_by_fingerprint(
+        self,
+        db_session: AsyncSession,
+        *,
+        fingerprint: str,
+    ) -> Publication | None:
+        result = await db_session.execute(
+            select(Publication).where(Publication.fingerprint_sha256 == fingerprint)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    def _select_existing_publication(
+        *,
+        cluster_publication: Publication | None,
+        fingerprint_publication: Publication | None,
+    ) -> Publication | None:
+        if cluster_publication is not None:
+            return cluster_publication
+        return fingerprint_publication
+
+    async def _create_publication(
+        self,
+        db_session: AsyncSession,
+        *,
         candidate: PublicationCandidate,
+        fingerprint: str,
     ) -> Publication:
-        fingerprint = build_publication_fingerprint(candidate)
+        publication = Publication(
+            cluster_id=candidate.cluster_id,
+            fingerprint_sha256=fingerprint,
+            title_raw=candidate.title,
+            title_normalized=normalize_title(candidate.title),
+            year=candidate.year,
+            citation_count=int(candidate.citation_count or 0),
+            author_text=candidate.authors_text,
+            venue_text=candidate.venue_text,
+            pub_url=build_publication_url(candidate.title_url),
+            pdf_url=build_publication_url(candidate.pdf_url),
+        )
+        db_session.add(publication)
+        await db_session.flush()
+        logger.debug(
+            "ingestion.publication_created",
+            extra={
+                "event": "ingestion.publication_created",
+                "publication_id": publication.id,
+                "cluster_id": publication.cluster_id,
+            },
+        )
+        return publication
 
-        publication: Publication | None = None
-        cluster_publication: Publication | None = None
-
-        if candidate.cluster_id:
-            cluster_result = await db_session.execute(
-                select(Publication).where(Publication.cluster_id == candidate.cluster_id)
-            )
-            cluster_publication = cluster_result.scalar_one_or_none()
-            publication = cluster_publication
-
-        if publication is None:
-            fingerprint_result = await db_session.execute(
-                select(Publication).where(Publication.fingerprint_sha256 == fingerprint)
-            )
-            publication = fingerprint_result.scalar_one_or_none()
-
-        if publication is not None and cluster_publication is not None and publication.id != cluster_publication.id:
-            publication = cluster_publication
-
-        if publication is None:
-            publication = Publication(
-                cluster_id=candidate.cluster_id,
-                fingerprint_sha256=fingerprint,
-                title_raw=candidate.title,
-                title_normalized=normalize_title(candidate.title),
-                year=candidate.year,
-                citation_count=int(candidate.citation_count or 0),
-                author_text=candidate.authors_text,
-                venue_text=candidate.venue_text,
-                pub_url=build_publication_url(candidate.title_url),
-                pdf_url=None,
-            )
-            db_session.add(publication)
-            await db_session.flush()
-            logger.debug(
-                "ingestion.publication_created",
-                extra={
-                    "event": "ingestion.publication_created",
-                    "publication_id": publication.id,
-                    "cluster_id": publication.cluster_id,
-                },
-            )
-            return publication
-
+    @staticmethod
+    def _update_existing_publication(
+        *,
+        publication: Publication,
+        candidate: PublicationCandidate,
+    ) -> None:
         if candidate.cluster_id and publication.cluster_id is None:
             publication.cluster_id = candidate.cluster_id
         publication.title_raw = candidate.title
@@ -1132,7 +2071,38 @@ class ScholarIngestionService:
             publication.venue_text = candidate.venue_text
         if candidate.title_url:
             publication.pub_url = build_publication_url(candidate.title_url)
+        if candidate.pdf_url:
+            publication.pdf_url = build_publication_url(candidate.pdf_url)
 
+    async def _resolve_publication(
+        self,
+        db_session: AsyncSession,
+        candidate: PublicationCandidate,
+    ) -> Publication:
+        self._validate_publication_candidate(candidate)
+        fingerprint = build_publication_fingerprint(candidate)
+        cluster_publication = await self._find_publication_by_cluster(
+            db_session,
+            cluster_id=candidate.cluster_id,
+        )
+        fingerprint_publication = await self._find_publication_by_fingerprint(
+            db_session,
+            fingerprint=fingerprint,
+        )
+        publication = self._select_existing_publication(
+            cluster_publication=cluster_publication,
+            fingerprint_publication=fingerprint_publication,
+        )
+        if publication is None:
+            return await self._create_publication(
+                db_session,
+                candidate=candidate,
+                fingerprint=fingerprint,
+            )
+        self._update_existing_publication(
+            publication=publication,
+            candidate=candidate,
+        )
         return publication
 
     def _resolve_run_status(

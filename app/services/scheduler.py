@@ -139,10 +139,7 @@ class SchedulerService:
                 continue
             await self._run_candidate(candidate)
 
-    async def _load_candidates(self) -> list[_AutoRunCandidate]:
-        if not settings.ingestion_automation_allowed:
-            return []
-
+    async def _load_candidate_rows(self) -> list[tuple]:
         session_factory = get_session_factory()
         async with session_factory() as session:
             result = await session.execute(
@@ -154,41 +151,48 @@ class SchedulerService:
                     UserSetting.scrape_cooldown_reason,
                 )
                 .join(User, User.id == UserSetting.user_id)
-                .where(
-                    User.is_active.is_(True),
-                    UserSetting.auto_run_enabled.is_(True),
-                )
+                .where(User.is_active.is_(True), UserSetting.auto_run_enabled.is_(True))
                 .order_by(UserSetting.user_id.asc())
             )
-            rows = result.all()
+            return result.all()
+
+    @staticmethod
+    def _candidate_from_row(row: tuple, *, now_utc: datetime) -> _AutoRunCandidate | None:
+        user_id, run_interval_minutes, request_delay_seconds, cooldown_until, cooldown_reason = row
+        if cooldown_until is not None and cooldown_until.tzinfo is None:
+            cooldown_until = cooldown_until.replace(tzinfo=timezone.utc)
+        if cooldown_until is not None and cooldown_until > now_utc:
+            logger.info(
+                "scheduler.run_skipped_safety_cooldown_precheck",
+                extra={
+                    "event": "scheduler.run_skipped_safety_cooldown_precheck",
+                    "user_id": int(user_id),
+                    "reason": cooldown_reason,
+                    "cooldown_until": cooldown_until,
+                    "cooldown_remaining_seconds": int((cooldown_until - now_utc).total_seconds()),
+                    "metric_name": "scheduler_run_skipped_safety_cooldown_total",
+                    "metric_value": 1,
+                },
+            )
+            return None
+        return _AutoRunCandidate(
+            user_id=int(user_id),
+            run_interval_minutes=int(run_interval_minutes),
+            request_delay_seconds=int(request_delay_seconds),
+            cooldown_until=cooldown_until,
+            cooldown_reason=(str(cooldown_reason).strip() if cooldown_reason else None),
+        )
+
+    async def _load_candidates(self) -> list[_AutoRunCandidate]:
+        if not settings.ingestion_automation_allowed:
+            return []
+        rows = await self._load_candidate_rows()
         now_utc = datetime.now(timezone.utc)
         candidates: list[_AutoRunCandidate] = []
-        for user_id, run_interval_minutes, request_delay_seconds, cooldown_until, cooldown_reason in rows:
-            if cooldown_until is not None and cooldown_until.tzinfo is None:
-                cooldown_until = cooldown_until.replace(tzinfo=timezone.utc)
-            if cooldown_until is not None and cooldown_until > now_utc:
-                logger.info(
-                    "scheduler.run_skipped_safety_cooldown_precheck",
-                    extra={
-                        "event": "scheduler.run_skipped_safety_cooldown_precheck",
-                        "user_id": int(user_id),
-                        "reason": cooldown_reason,
-                        "cooldown_until": cooldown_until,
-                        "cooldown_remaining_seconds": int((cooldown_until - now_utc).total_seconds()),
-                        "metric_name": "scheduler_run_skipped_safety_cooldown_total",
-                        "metric_value": 1,
-                    },
-                )
-                continue
-            candidates.append(
-                _AutoRunCandidate(
-                    user_id=int(user_id),
-                    run_interval_minutes=int(run_interval_minutes),
-                    request_delay_seconds=int(request_delay_seconds),
-                    cooldown_until=cooldown_until,
-                    cooldown_reason=(str(cooldown_reason).strip() if cooldown_reason else None),
-                )
-            )
+        for row in rows:
+            candidate = self._candidate_from_row(row, now_utc=now_utc)
+            if candidate is not None:
+                candidates.append(candidate)
         return candidates
 
     async def _is_due(self, candidate: _AutoRunCandidate, *, now: datetime) -> bool:
@@ -212,12 +216,16 @@ class SchedulerService:
         )
         return now >= next_due_dt
 
-    async def _run_candidate(self, candidate: _AutoRunCandidate) -> None:
+    async def _run_candidate_ingestion(
+        self,
+        *,
+        candidate: _AutoRunCandidate,
+    ):
         session_factory = get_session_factory()
         async with session_factory() as session:
             ingestion = ScholarIngestionService(source=self._source)
             try:
-                run_summary = await ingestion.run_for_user(
+                return await ingestion.run_for_user(
                     session,
                     user_id=candidate.user_id,
                     trigger_type=RunTriggerType.SCHEDULED,
@@ -234,14 +242,8 @@ class SchedulerService:
                 )
             except RunAlreadyInProgressError:
                 await session.rollback()
-                logger.info(
-                    "scheduler.run_skipped_locked",
-                    extra={
-                        "event": "scheduler.run_skipped_locked",
-                        "user_id": candidate.user_id,
-                    },
-                )
-                return
+                logger.info("scheduler.run_skipped_locked", extra={"event": "scheduler.run_skipped_locked", "user_id": candidate.user_id})
+                return None
             except RunBlockedBySafetyPolicyError as exc:
                 await session.rollback()
                 logger.info(
@@ -256,18 +258,16 @@ class SchedulerService:
                         "metric_value": 1,
                     },
                 )
-                return
+                return None
             except Exception:
                 await session.rollback()
-                logger.exception(
-                    "scheduler.run_failed",
-                    extra={
-                        "event": "scheduler.run_failed",
-                        "user_id": candidate.user_id,
-                    },
-                )
-                return
+                logger.exception("scheduler.run_failed", extra={"event": "scheduler.run_failed", "user_id": candidate.user_id})
+                return None
 
+    async def _run_candidate(self, candidate: _AutoRunCandidate) -> None:
+        run_summary = await self._run_candidate_ingestion(candidate=candidate)
+        if run_summary is None:
+            return
         logger.info(
             "scheduler.run_completed",
             extra={
@@ -292,41 +292,53 @@ class SchedulerService:
         for job in jobs:
             await self._run_queue_job(job)
 
-    async def _run_queue_job(self, job: queue_service.ContinuationQueueJob) -> None:
-        if job.attempt_count >= self._continuation_max_attempts:
-            session_factory = get_session_factory()
-            async with session_factory() as session:
-                dropped = await queue_service.mark_dropped(
-                    session,
-                    job_id=job.id,
-                    reason="max_attempts_reached",
-                )
-                await session.commit()
-            if dropped is not None:
-                logger.warning(
-                    "scheduler.queue_item_dropped_max_attempts",
-                    extra={
-                        "event": "scheduler.queue_item_dropped_max_attempts",
-                        "queue_item_id": job.id,
-                        "user_id": job.user_id,
-                        "scholar_profile_id": job.scholar_profile_id,
-                        "attempt_count": job.attempt_count,
-                        "max_attempts": self._continuation_max_attempts,
-                    },
-                )
-            return
+    async def _drop_queue_job_if_max_attempts(
+        self,
+        job: queue_service.ContinuationQueueJob,
+    ) -> bool:
+        if job.attempt_count < self._continuation_max_attempts:
+            return False
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            dropped = await queue_service.mark_dropped(
+                session,
+                job_id=job.id,
+                reason="max_attempts_reached",
+            )
+            await session.commit()
+        if dropped is not None:
+            logger.warning(
+                "scheduler.queue_item_dropped_max_attempts",
+                extra={
+                    "event": "scheduler.queue_item_dropped_max_attempts",
+                    "queue_item_id": job.id,
+                    "user_id": job.user_id,
+                    "scholar_profile_id": job.scholar_profile_id,
+                    "attempt_count": job.attempt_count,
+                    "max_attempts": self._continuation_max_attempts,
+                },
+            )
+        return True
 
+    async def _mark_queue_job_retrying(
+        self,
+        job: queue_service.ContinuationQueueJob,
+    ) -> bool:
         session_factory = get_session_factory()
         async with session_factory() as session:
             queue_item = await queue_service.mark_retrying(session, job_id=job.id)
-            if queue_item is None:
-                await session.commit()
-                return
-            if queue_item.status == QueueItemStatus.DROPPED.value:
-                await session.commit()
-                return
             await session.commit()
+        if queue_item is None:
+            return False
+        if queue_item.status == QueueItemStatus.DROPPED.value:
+            return False
+        return True
 
+    async def _queue_job_has_available_scholar(
+        self,
+        job: queue_service.ContinuationQueueJob,
+    ) -> bool:
+        session_factory = get_session_factory()
         async with session_factory() as session:
             scholar_result = await session.execute(
                 select(ScholarProfile.id).where(
@@ -336,33 +348,124 @@ class SchedulerService:
                 )
             )
             scholar_id = scholar_result.scalar_one_or_none()
-            if scholar_id is None:
-                dropped = await queue_service.mark_dropped(
-                    session,
-                    job_id=job.id,
-                    reason="scholar_unavailable",
-                )
-                await session.commit()
-                if dropped is not None:
-                    logger.info(
-                        "scheduler.queue_item_dropped_scholar_unavailable",
-                        extra={
-                            "event": "scheduler.queue_item_dropped_scholar_unavailable",
-                            "queue_item_id": job.id,
-                            "user_id": job.user_id,
-                            "scholar_profile_id": job.scholar_profile_id,
-                        },
-                    )
-                return
-
-        async with session_factory() as session:
-            request_delay_seconds = await self._load_request_delay_for_user(
+            if scholar_id is not None:
+                return True
+            dropped = await queue_service.mark_dropped(
                 session,
-                user_id=job.user_id,
+                job_id=job.id,
+                reason="scholar_unavailable",
             )
+            await session.commit()
+        if dropped is not None:
+            logger.info(
+                "scheduler.queue_item_dropped_scholar_unavailable",
+                extra={
+                    "event": "scheduler.queue_item_dropped_scholar_unavailable",
+                    "queue_item_id": job.id,
+                    "user_id": job.user_id,
+                    "scholar_profile_id": job.scholar_profile_id,
+                },
+            )
+        return False
+
+    async def _reschedule_queue_job_lock_active(self, job: queue_service.ContinuationQueueJob) -> None:
+        session_factory = get_session_factory()
+        async with session_factory() as recovery_session:
+            await queue_service.reschedule_job(
+                recovery_session,
+                job_id=job.id,
+                delay_seconds=max(self._tick_seconds, 15),
+                reason="user_run_lock_active",
+                error="run_already_in_progress",
+            )
+            await recovery_session.commit()
+        logger.info(
+            "scheduler.queue_item_deferred_lock",
+            extra={"event": "scheduler.queue_item_deferred_lock", "queue_item_id": job.id, "user_id": job.user_id},
+        )
+
+    async def _reschedule_queue_job_safety_cooldown(
+        self,
+        job: queue_service.ContinuationQueueJob,
+        exc: RunBlockedBySafetyPolicyError,
+    ) -> None:
+        cooldown_remaining_seconds = max(
+            self._tick_seconds,
+            int(exc.safety_state.get("cooldown_remaining_seconds") or 0),
+        )
+        session_factory = get_session_factory()
+        async with session_factory() as recovery_session:
+            await queue_service.reschedule_job(
+                recovery_session,
+                job_id=job.id,
+                delay_seconds=max(self._tick_seconds, cooldown_remaining_seconds),
+                reason="scrape_safety_cooldown",
+                error=str(exc.message),
+            )
+            await recovery_session.commit()
+        logger.info(
+            "scheduler.queue_item_deferred_safety_cooldown",
+            extra={
+                "event": "scheduler.queue_item_deferred_safety_cooldown",
+                "queue_item_id": job.id,
+                "user_id": job.user_id,
+                "reason": exc.safety_state.get("cooldown_reason"),
+                "cooldown_remaining_seconds": cooldown_remaining_seconds,
+                "metric_name": "scheduler_queue_item_deferred_safety_cooldown_total",
+                "metric_value": 1,
+            },
+        )
+
+    async def _reschedule_queue_job_after_exception(
+        self,
+        job: queue_service.ContinuationQueueJob,
+        *,
+        exc: Exception,
+    ) -> None:
+        session_factory = get_session_factory()
+        async with session_factory() as recovery_session:
+            queue_item = await queue_service.increment_attempt_count(recovery_session, job_id=job.id)
+            if queue_item is None:
+                await recovery_session.commit()
+                return
+            if int(queue_item.attempt_count) >= self._continuation_max_attempts:
+                await queue_service.mark_dropped(
+                    recovery_session,
+                    job_id=job.id,
+                    reason="scheduler_exception_max_attempts",
+                    error=str(exc),
+                )
+                await recovery_session.commit()
+                logger.warning(
+                    "scheduler.queue_item_dropped_after_exception",
+                    extra={"event": "scheduler.queue_item_dropped_after_exception", "queue_item_id": job.id, "user_id": job.user_id, "attempt_count": queue_item.attempt_count},
+                )
+                return
+            delay_seconds = queue_service.compute_backoff_seconds(
+                base_seconds=self._continuation_base_delay_seconds,
+                attempt_count=int(queue_item.attempt_count),
+                max_seconds=self._continuation_max_delay_seconds,
+            )
+            await queue_service.reschedule_job(
+                recovery_session,
+                job_id=job.id,
+                delay_seconds=delay_seconds,
+                reason="scheduler_exception",
+                error=str(exc),
+            )
+            await recovery_session.commit()
+        logger.exception("scheduler.queue_item_run_failed", extra={"event": "scheduler.queue_item_run_failed", "queue_item_id": job.id, "user_id": job.user_id})
+
+    async def _run_ingestion_for_queue_job(
+        self,
+        job: queue_service.ContinuationQueueJob,
+    ):
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            request_delay_seconds = await self._load_request_delay_for_user(session, user_id=job.user_id)
             ingestion = ScholarIngestionService(source=self._source)
             try:
-                run_summary = await ingestion.run_for_user(
+                return await ingestion.run_for_user(
                     session,
                     user_id=job.user_id,
                     trigger_type=RunTriggerType.SCHEDULED,
@@ -372,9 +475,7 @@ class SchedulerService:
                     max_pages_per_scholar=self._max_pages_per_scholar,
                     page_size=self._page_size,
                     scholar_profile_ids={job.scholar_profile_id},
-                    start_cstart_by_scholar_id={
-                        job.scholar_profile_id: job.resume_cstart,
-                    },
+                    start_cstart_by_scholar_id={job.scholar_profile_id: job.resume_cstart},
                     auto_queue_continuations=self._continuation_queue_enabled,
                     queue_delay_seconds=self._continuation_base_delay_seconds,
                     alert_blocked_failure_threshold=settings.ingestion_alert_blocked_failure_threshold,
@@ -383,200 +484,88 @@ class SchedulerService:
                 )
             except RunAlreadyInProgressError:
                 await session.rollback()
-                async with session_factory() as recovery_session:
-                    await queue_service.reschedule_job(
-                        recovery_session,
-                        job_id=job.id,
-                        delay_seconds=max(self._tick_seconds, 15),
-                        reason="user_run_lock_active",
-                        error="run_already_in_progress",
-                    )
-                    await recovery_session.commit()
-                logger.info(
-                    "scheduler.queue_item_deferred_lock",
-                    extra={
-                        "event": "scheduler.queue_item_deferred_lock",
-                        "queue_item_id": job.id,
-                        "user_id": job.user_id,
-                    },
-                )
-                return
+                await self._reschedule_queue_job_lock_active(job)
             except RunBlockedBySafetyPolicyError as exc:
                 await session.rollback()
-                cooldown_remaining_seconds = max(
-                    self._tick_seconds,
-                    int(exc.safety_state.get("cooldown_remaining_seconds") or 0),
-                )
-                async with session_factory() as recovery_session:
-                    await queue_service.reschedule_job(
-                        recovery_session,
-                        job_id=job.id,
-                        delay_seconds=max(self._tick_seconds, cooldown_remaining_seconds),
-                        reason="scrape_safety_cooldown",
-                        error=str(exc.message),
-                    )
-                    await recovery_session.commit()
-                logger.info(
-                    "scheduler.queue_item_deferred_safety_cooldown",
-                    extra={
-                        "event": "scheduler.queue_item_deferred_safety_cooldown",
-                        "queue_item_id": job.id,
-                        "user_id": job.user_id,
-                        "reason": exc.safety_state.get("cooldown_reason"),
-                        "cooldown_remaining_seconds": cooldown_remaining_seconds,
-                        "metric_name": "scheduler_queue_item_deferred_safety_cooldown_total",
-                        "metric_value": 1,
-                    },
-                )
-                return
+                await self._reschedule_queue_job_safety_cooldown(job, exc)
             except Exception as exc:
                 await session.rollback()
-                async with session_factory() as recovery_session:
-                    queue_item = await queue_service.increment_attempt_count(
-                        recovery_session,
-                        job_id=job.id,
-                    )
-                    if queue_item is None:
-                        await recovery_session.commit()
-                        return
-                    if int(queue_item.attempt_count) >= self._continuation_max_attempts:
-                        await queue_service.mark_dropped(
-                            recovery_session,
-                            job_id=job.id,
-                            reason="scheduler_exception_max_attempts",
-                            error=str(exc),
-                        )
-                        await recovery_session.commit()
-                        logger.warning(
-                            "scheduler.queue_item_dropped_after_exception",
-                            extra={
-                                "event": "scheduler.queue_item_dropped_after_exception",
-                                "queue_item_id": job.id,
-                                "user_id": job.user_id,
-                                "attempt_count": queue_item.attempt_count,
-                            },
-                        )
-                        return
-                    delay_seconds = queue_service.compute_backoff_seconds(
-                        base_seconds=self._continuation_base_delay_seconds,
-                        attempt_count=int(queue_item.attempt_count),
-                        max_seconds=self._continuation_max_delay_seconds,
-                    )
-                    await queue_service.reschedule_job(
-                        recovery_session,
-                        job_id=job.id,
-                        delay_seconds=delay_seconds,
-                        reason="scheduler_exception",
-                        error=str(exc),
-                    )
-                    await recovery_session.commit()
-                logger.exception(
-                    "scheduler.queue_item_run_failed",
-                    extra={
-                        "event": "scheduler.queue_item_run_failed",
-                        "queue_item_id": job.id,
-                        "user_id": job.user_id,
-                    },
-                )
-                return
+                await self._reschedule_queue_job_after_exception(job, exc=exc)
+        return None
 
+    @staticmethod
+    def _log_queue_item_resolved(
+        *,
+        event_name: str,
+        job: queue_service.ContinuationQueueJob,
+        run_summary,
+        attempt_count: int | None = None,
+        delay_seconds: int | None = None,
+    ) -> None:
+        payload = {
+            "event": event_name,
+            "queue_item_id": job.id,
+            "user_id": job.user_id,
+            "run_id": run_summary.crawl_run_id,
+            "status": run_summary.status.value,
+        }
+        if attempt_count is not None:
+            payload["attempt_count"] = attempt_count
+        if delay_seconds is not None:
+            payload["delay_seconds"] = delay_seconds
+        logger.info(event_name, extra=payload)
+
+    async def _finalize_queue_job_after_run(self, job: queue_service.ContinuationQueueJob, run_summary) -> None:
+        session_factory = get_session_factory()
         async with session_factory() as session:
-            # Failed-attempt budget should advance only when continuation execution fails.
             if int(run_summary.failed_count) <= 0:
-                queue_item = await queue_service.reset_attempt_count(
-                    session,
-                    job_id=job.id,
-                )
-                if queue_item is None:
-                    await session.commit()
-                    logger.info(
-                        "scheduler.queue_item_resolved",
-                        extra={
-                            "event": "scheduler.queue_item_resolved",
-                            "queue_item_id": job.id,
-                            "user_id": job.user_id,
-                            "run_id": run_summary.crawl_run_id,
-                            "status": run_summary.status.value,
-                        },
-                    )
-                    return
+                queue_item = await queue_service.reset_attempt_count(session, job_id=job.id)
                 await session.commit()
-                logger.info(
-                    "scheduler.queue_item_progressed",
-                    extra={
-                        "event": "scheduler.queue_item_progressed",
-                        "queue_item_id": job.id,
-                        "user_id": job.user_id,
-                        "attempt_count": int(queue_item.attempt_count),
-                        "run_id": run_summary.crawl_run_id,
-                        "status": run_summary.status.value,
-                    },
+                if queue_item is None:
+                    self._log_queue_item_resolved(event_name="scheduler.queue_item_resolved", job=job, run_summary=run_summary)
+                    return
+                self._log_queue_item_resolved(
+                    event_name="scheduler.queue_item_progressed",
+                    job=job,
+                    run_summary=run_summary,
+                    attempt_count=int(queue_item.attempt_count),
                 )
                 return
-
-            queue_item = await queue_service.increment_attempt_count(
-                session,
-                job_id=job.id,
-            )
+            queue_item = await queue_service.increment_attempt_count(session, job_id=job.id)
             if queue_item is None:
                 await session.commit()
-                logger.info(
-                    "scheduler.queue_item_resolved",
-                    extra={
-                        "event": "scheduler.queue_item_resolved",
-                        "queue_item_id": job.id,
-                        "user_id": job.user_id,
-                        "run_id": run_summary.crawl_run_id,
-                        "status": run_summary.status.value,
-                    },
-                )
+                self._log_queue_item_resolved(event_name="scheduler.queue_item_resolved", job=job, run_summary=run_summary)
                 return
-
             if int(queue_item.attempt_count) >= self._continuation_max_attempts:
-                await queue_service.mark_dropped(
-                    session,
-                    job_id=job.id,
-                    reason="max_attempts_after_run",
-                )
+                await queue_service.mark_dropped(session, job_id=job.id, reason="max_attempts_after_run")
                 await session.commit()
                 logger.warning(
                     "scheduler.queue_item_dropped_max_attempts_after_run",
-                    extra={
-                        "event": "scheduler.queue_item_dropped_max_attempts_after_run",
-                        "queue_item_id": job.id,
-                        "user_id": job.user_id,
-                        "attempt_count": queue_item.attempt_count,
-                        "run_id": run_summary.crawl_run_id,
-                        "status": run_summary.status.value,
-                    },
+                    extra={"event": "scheduler.queue_item_dropped_max_attempts_after_run", "queue_item_id": job.id, "user_id": job.user_id, "attempt_count": queue_item.attempt_count, "run_id": run_summary.crawl_run_id, "status": run_summary.status.value},
                 )
                 return
-
-            delay_seconds = queue_service.compute_backoff_seconds(
-                base_seconds=self._continuation_base_delay_seconds,
-                attempt_count=int(queue_item.attempt_count),
-                max_seconds=self._continuation_max_delay_seconds,
-            )
-            await queue_service.reschedule_job(
-                session,
-                job_id=job.id,
-                delay_seconds=delay_seconds,
-                reason=queue_item.reason,
-                error=queue_item.last_error,
-            )
+            delay_seconds = queue_service.compute_backoff_seconds(base_seconds=self._continuation_base_delay_seconds, attempt_count=int(queue_item.attempt_count), max_seconds=self._continuation_max_delay_seconds)
+            await queue_service.reschedule_job(session, job_id=job.id, delay_seconds=delay_seconds, reason=queue_item.reason, error=queue_item.last_error)
             await session.commit()
-            logger.info(
-                "scheduler.queue_item_rescheduled_failed",
-                extra={
-                    "event": "scheduler.queue_item_rescheduled_failed",
-                    "queue_item_id": job.id,
-                    "user_id": job.user_id,
-                    "attempt_count": queue_item.attempt_count,
-                    "delay_seconds": delay_seconds,
-                    "run_id": run_summary.crawl_run_id,
-                    "status": run_summary.status.value,
-                },
-            )
+        self._log_queue_item_resolved(
+            event_name="scheduler.queue_item_rescheduled_failed",
+            job=job,
+            run_summary=run_summary,
+            attempt_count=int(queue_item.attempt_count),
+            delay_seconds=delay_seconds,
+        )
+
+    async def _run_queue_job(self, job: queue_service.ContinuationQueueJob) -> None:
+        if await self._drop_queue_job_if_max_attempts(job):
+            return
+        if not await self._mark_queue_job_retrying(job):
+            return
+        if not await self._queue_job_has_available_scholar(job):
+            return
+        run_summary = await self._run_ingestion_for_queue_job(job)
+        if run_summary is None:
+            return
+        await self._finalize_queue_job_after_run(job, run_summary)
 
     async def _load_request_delay_for_user(
         self,

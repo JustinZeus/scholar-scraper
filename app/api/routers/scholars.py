@@ -13,6 +13,9 @@ from app.api.errors import ApiException
 from app.api.responses import success_payload
 from app.api.runtime_deps import get_scholar_source
 from app.api.schemas import (
+    DataExportEnvelope,
+    DataImportEnvelope,
+    DataImportRequest,
     MessageEnvelope,
     ScholarCreateRequest,
     ScholarEnvelope,
@@ -22,6 +25,7 @@ from app.api.schemas import (
 )
 from app.db.models import User
 from app.db.session import get_db_session
+from app.services import import_export as import_export_service
 from app.services import scholars as scholar_service
 from app.services.scholar_source import ScholarSource
 from app.settings import settings
@@ -79,6 +83,68 @@ async def list_scholars(
             "scholars": [_serialize_scholar(profile) for profile in scholars],
         },
     )
+
+
+@router.get(
+    "/export",
+    response_model=DataExportEnvelope,
+)
+async def export_scholars_and_publications(
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    data = await import_export_service.export_user_data(
+        db_session,
+        user_id=current_user.id,
+    )
+    return success_payload(request, data=data)
+
+
+@router.post(
+    "/import",
+    response_model=DataImportEnvelope,
+)
+async def import_scholars_and_publications(
+    payload: DataImportRequest,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    if (
+        payload.schema_version is not None
+        and int(payload.schema_version) != import_export_service.EXPORT_SCHEMA_VERSION
+    ):
+        raise ApiException(
+            status_code=400,
+            code="invalid_import_schema_version",
+            message=(
+                "Import schema version is not supported. "
+                f"Expected {import_export_service.EXPORT_SCHEMA_VERSION}."
+            ),
+        )
+    try:
+        result = await import_export_service.import_user_data(
+            db_session,
+            user_id=current_user.id,
+            scholars=[item.model_dump() for item in payload.scholars],
+            publications=[item.model_dump() for item in payload.publications],
+        )
+    except import_export_service.ImportExportError as exc:
+        raise ApiException(
+            status_code=400,
+            code="invalid_import_payload",
+            message=str(exc),
+        ) from exc
+    logger.info(
+        "api.scholars.imported",
+        extra={
+            "event": "api.scholars.imported",
+            "user_id": current_user.id,
+            **result,
+        },
+    )
+    return success_payload(request, data=result)
 
 
 @router.post(

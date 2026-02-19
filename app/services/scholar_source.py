@@ -123,8 +123,8 @@ class LiveScholarSource:
         )
         return await asyncio.to_thread(self._fetch_sync, requested_url)
 
-    def _fetch_sync(self, requested_url: str) -> FetchResult:
-        request = Request(
+    def _build_request(self, requested_url: str) -> Request:
+        return Request(
             requested_url,
             headers={
                 "User-Agent": random.choice(self._user_agents),
@@ -134,61 +134,75 @@ class LiveScholarSource:
             },
         )
 
+    @staticmethod
+    def _http_error_body(exc: HTTPError) -> str:
+        try:
+            return exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _network_error_result(requested_url: str, exc: URLError) -> FetchResult:
+        logger.warning(
+            "scholar_source.fetch_network_error",
+            extra={"event": "scholar_source.fetch_network_error", "requested_url": requested_url},
+        )
+        return FetchResult(
+            requested_url=requested_url,
+            status_code=None,
+            final_url=None,
+            body="",
+            error=str(exc),
+        )
+
+    @staticmethod
+    def _http_error_result(requested_url: str, exc: HTTPError) -> FetchResult:
+        logger.warning(
+            "scholar_source.fetch_http_error",
+            extra={
+                "event": "scholar_source.fetch_http_error",
+                "requested_url": requested_url,
+                "status_code": exc.code,
+            },
+        )
+        return FetchResult(
+            requested_url=requested_url,
+            status_code=exc.code,
+            final_url=exc.geturl(),
+            body=LiveScholarSource._http_error_body(exc),
+            error=str(exc),
+        )
+
+    @staticmethod
+    def _success_result(requested_url: str, response) -> FetchResult:
+        body = response.read().decode("utf-8", errors="replace")
+        status_code = getattr(response, "status", 200)
+        logger.debug(
+            "scholar_source.fetch_succeeded",
+            extra={
+                "event": "scholar_source.fetch_succeeded",
+                "requested_url": requested_url,
+                "status_code": status_code,
+            },
+        )
+        return FetchResult(
+            requested_url=requested_url,
+            status_code=status_code,
+            final_url=response.geturl(),
+            body=body,
+            error=None,
+        )
+
+    def _fetch_sync(self, requested_url: str) -> FetchResult:
+        request = self._build_request(requested_url)
+
         try:
             with urlopen(request, timeout=self._timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="replace")
-                status_code = getattr(response, "status", 200)
-                logger.debug(
-                    "scholar_source.fetch_succeeded",
-                    extra={
-                        "event": "scholar_source.fetch_succeeded",
-                        "requested_url": requested_url,
-                        "status_code": status_code,
-                    },
-                )
-                return FetchResult(
-                    requested_url=requested_url,
-                    status_code=status_code,
-                    final_url=response.geturl(),
-                    body=body,
-                    error=None,
-                )
+                return self._success_result(requested_url, response)
         except HTTPError as exc:
-            body = ""
-            try:
-                body = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                body = ""
-            logger.warning(
-                "scholar_source.fetch_http_error",
-                extra={
-                    "event": "scholar_source.fetch_http_error",
-                    "requested_url": requested_url,
-                    "status_code": exc.code,
-                },
-            )
-            return FetchResult(
-                requested_url=requested_url,
-                status_code=exc.code,
-                final_url=exc.geturl(),
-                body=body,
-                error=str(exc),
-            )
+            return self._http_error_result(requested_url, exc)
         except URLError as exc:
-            logger.warning(
-                "scholar_source.fetch_network_error",
-                extra={
-                    "event": "scholar_source.fetch_network_error",
-                    "requested_url": requested_url,
-                },
-            )
-            return FetchResult(
-                requested_url=requested_url,
-                status_code=None,
-                final_url=None,
-                body="",
-                error=str(exc),
-            )
+            return self._network_error_result(requested_url, exc)
 
 
 def _build_profile_url(*, scholar_id: str, cstart: int, pagesize: int) -> str:

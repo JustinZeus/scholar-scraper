@@ -99,6 +99,10 @@ function scholarLabel(item: ScholarProfile): string {
   return item.display_name || item.scholar_id;
 }
 
+function publicationPrimaryUrl(item: PublicationItem): string | null {
+  return item.pub_url || item.pdf_url;
+}
+
 const selectedScholarName = computed(() => {
   const selectedId = Number(selectedScholarFilter.value);
   if (!Number.isInteger(selectedId) || selectedId <= 0) {
@@ -590,16 +594,27 @@ watch(
                 />
               </td>
               <td>
-                <a
-                  v-if="item.pub_url"
-                  :href="item.pub_url"
-                  target="_blank"
-                  rel="noreferrer"
-                  class="link-inline"
-                >
-                  {{ item.title }}
-                </a>
-                <span v-else>{{ item.title }}</span>
+                <div class="grid gap-1">
+                  <a
+                    v-if="publicationPrimaryUrl(item)"
+                    :href="publicationPrimaryUrl(item) || ''"
+                    target="_blank"
+                    rel="noreferrer"
+                    class="link-inline"
+                  >
+                    {{ item.title }}
+                  </a>
+                  <span v-else>{{ item.title }}</span>
+                  <a
+                    v-if="item.pdf_url"
+                    :href="item.pdf_url"
+                    target="_blank"
+                    rel="noreferrer"
+                    class="link-inline text-xs"
+                  >
+                    Direct PDF
+                  </a>
+                </div>
               </td>
               <td>{{ item.scholar_label }}</td>
               <td>{{ item.year ?? "n/a" }}</td>
@@ -607,7 +622,7 @@ watch(
               <td>
                 <div class="flex flex-wrap items-center gap-2">
                   <AppBadge :tone="item.is_new_in_latest_run ? 'info' : 'neutral'">
-                    {{ item.is_new_in_latest_run ? "New this check" : "Seen before" }}
+                    {{ item.is_new_in_latest_run ? "New" : "Seen before" }}
                   </AppBadge>
                   <AppBadge :tone="item.is_read ? 'success' : 'warning'">
                     {{ item.is_read ? "Read" : "Unread" }}

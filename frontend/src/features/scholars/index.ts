@@ -37,6 +37,50 @@ export interface ScholarSearchResult {
   warnings: string[];
 }
 
+export interface ScholarExportItem {
+  scholar_id: string;
+  display_name: string | null;
+  is_enabled: boolean;
+  profile_image_override_url: string | null;
+}
+
+export interface PublicationExportItem {
+  scholar_id: string;
+  cluster_id: string | null;
+  fingerprint_sha256: string | null;
+  title: string;
+  year: number | null;
+  citation_count: number;
+  author_text: string | null;
+  venue_text: string | null;
+  pub_url: string | null;
+  pdf_url: string | null;
+  is_read: boolean;
+}
+
+export interface DataExportPayload {
+  schema_version: number;
+  exported_at: string;
+  scholars: ScholarExportItem[];
+  publications: PublicationExportItem[];
+}
+
+export interface DataImportPayload {
+  schema_version?: number;
+  scholars: ScholarExportItem[];
+  publications: PublicationExportItem[];
+}
+
+export interface DataImportResult {
+  scholars_created: number;
+  scholars_updated: number;
+  publications_created: number;
+  publications_updated: number;
+  links_created: number;
+  links_updated: number;
+  skipped_records: number;
+}
+
 interface ScholarsListData {
   scholars: ScholarProfile[];
 }
@@ -112,6 +156,23 @@ export async function clearScholarImage(
 ): Promise<ScholarProfile> {
   const response = await apiRequest<ScholarProfile>(`/scholars/${scholarProfileId}/image`, {
     method: "DELETE",
+  });
+  return response.data;
+}
+
+export async function exportScholarData(): Promise<DataExportPayload> {
+  const response = await apiRequest<DataExportPayload>("/scholars/export", {
+    method: "GET",
+  });
+  return response.data;
+}
+
+export async function importScholarData(
+  payload: DataImportPayload,
+): Promise<DataImportResult> {
+  const response = await apiRequest<DataImportResult>("/scholars/import", {
+    method: "POST",
+    body: payload,
   });
   return response.data;
 }

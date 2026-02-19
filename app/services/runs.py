@@ -129,6 +129,70 @@ def extract_run_summary(error_log: object) -> dict[str, Any]:
     }
 
 
+def _queue_item_columns() -> tuple:
+    return (
+        IngestionQueueItem.id,
+        IngestionQueueItem.scholar_profile_id,
+        ScholarProfile.display_name,
+        ScholarProfile.scholar_id,
+        IngestionQueueItem.status,
+        IngestionQueueItem.reason,
+        IngestionQueueItem.dropped_reason,
+        IngestionQueueItem.attempt_count,
+        IngestionQueueItem.resume_cstart,
+        IngestionQueueItem.next_attempt_dt,
+        IngestionQueueItem.updated_at,
+        IngestionQueueItem.last_error,
+        IngestionQueueItem.last_run_id,
+    )
+
+
+def _queue_item_select(*, user_id: int):
+    return (
+        select(*_queue_item_columns())
+        .join(
+            ScholarProfile,
+            and_(
+                ScholarProfile.id == IngestionQueueItem.scholar_profile_id,
+                ScholarProfile.user_id == IngestionQueueItem.user_id,
+            ),
+        )
+        .where(IngestionQueueItem.user_id == user_id)
+    )
+
+
+def _queue_list_item_from_row(row: tuple) -> QueueListItem:
+    (
+        item_id,
+        scholar_profile_id,
+        display_name,
+        scholar_id,
+        status,
+        reason,
+        dropped_reason,
+        attempt_count,
+        resume_cstart,
+        next_attempt_dt,
+        updated_at,
+        last_error,
+        last_run_id,
+    ) = row
+    return QueueListItem(
+        id=int(item_id),
+        scholar_profile_id=int(scholar_profile_id),
+        scholar_label=(display_name or scholar_id),
+        status=str(status),
+        reason=str(reason),
+        dropped_reason=dropped_reason,
+        attempt_count=int(attempt_count or 0),
+        resume_cstart=int(resume_cstart or 0),
+        next_attempt_dt=next_attempt_dt,
+        updated_at=updated_at,
+        last_error=last_error,
+        last_run_id=int(last_run_id) if last_run_id is not None else None,
+    )
+
+
 async def list_recent_runs_for_user(
     db_session: AsyncSession,
     *,
@@ -209,29 +273,7 @@ async def list_queue_items_for_user(
     limit: int = 200,
 ) -> list[QueueListItem]:
     result = await db_session.execute(
-        select(
-            IngestionQueueItem.id,
-            IngestionQueueItem.scholar_profile_id,
-            ScholarProfile.display_name,
-            ScholarProfile.scholar_id,
-            IngestionQueueItem.status,
-            IngestionQueueItem.reason,
-            IngestionQueueItem.dropped_reason,
-            IngestionQueueItem.attempt_count,
-            IngestionQueueItem.resume_cstart,
-            IngestionQueueItem.next_attempt_dt,
-            IngestionQueueItem.updated_at,
-            IngestionQueueItem.last_error,
-            IngestionQueueItem.last_run_id,
-        )
-        .join(
-            ScholarProfile,
-            and_(
-                ScholarProfile.id == IngestionQueueItem.scholar_profile_id,
-                ScholarProfile.user_id == IngestionQueueItem.user_id,
-            ),
-        )
-        .where(IngestionQueueItem.user_id == user_id)
+        _queue_item_select(user_id=user_id)
         .order_by(
             case((IngestionQueueItem.status == "dropped", 1), else_=0).asc(),
             IngestionQueueItem.next_attempt_dt.asc(),
@@ -239,41 +281,7 @@ async def list_queue_items_for_user(
         )
         .limit(limit)
     )
-
-    items: list[QueueListItem] = []
-    for row in result.all():
-        (
-            item_id,
-            scholar_profile_id,
-            display_name,
-            scholar_id,
-            status,
-            reason,
-            dropped_reason,
-            attempt_count,
-            resume_cstart,
-            next_attempt_dt,
-            updated_at,
-            last_error,
-            last_run_id,
-        ) = row
-        items.append(
-            QueueListItem(
-                id=int(item_id),
-                scholar_profile_id=int(scholar_profile_id),
-                scholar_label=(display_name or scholar_id),
-                status=str(status),
-                reason=str(reason),
-                dropped_reason=dropped_reason,
-                attempt_count=int(attempt_count or 0),
-                resume_cstart=int(resume_cstart or 0),
-                next_attempt_dt=next_attempt_dt,
-                updated_at=updated_at,
-                last_error=last_error,
-                last_run_id=int(last_run_id) if last_run_id is not None else None,
-            )
-        )
-    return items
+    return [_queue_list_item_from_row(row) for row in result.all()]
 
 
 async def get_queue_item_for_user(
@@ -283,66 +291,14 @@ async def get_queue_item_for_user(
     queue_item_id: int,
 ) -> QueueListItem | None:
     result = await db_session.execute(
-        select(
-            IngestionQueueItem.id,
-            IngestionQueueItem.scholar_profile_id,
-            ScholarProfile.display_name,
-            ScholarProfile.scholar_id,
-            IngestionQueueItem.status,
-            IngestionQueueItem.reason,
-            IngestionQueueItem.dropped_reason,
-            IngestionQueueItem.attempt_count,
-            IngestionQueueItem.resume_cstart,
-            IngestionQueueItem.next_attempt_dt,
-            IngestionQueueItem.updated_at,
-            IngestionQueueItem.last_error,
-            IngestionQueueItem.last_run_id,
-        )
-        .join(
-            ScholarProfile,
-            and_(
-                ScholarProfile.id == IngestionQueueItem.scholar_profile_id,
-                ScholarProfile.user_id == IngestionQueueItem.user_id,
-            ),
-        )
-        .where(
-            IngestionQueueItem.user_id == user_id,
-            IngestionQueueItem.id == queue_item_id,
-        )
+        _queue_item_select(user_id=user_id)
+        .where(IngestionQueueItem.id == queue_item_id)
         .limit(1)
     )
     row = result.one_or_none()
     if row is None:
         return None
-    (
-        item_id,
-        scholar_profile_id,
-        display_name,
-        scholar_id,
-        status,
-        reason,
-        dropped_reason,
-        attempt_count,
-        resume_cstart,
-        next_attempt_dt,
-        updated_at,
-        last_error,
-        last_run_id,
-    ) = row
-    return QueueListItem(
-        id=int(item_id),
-        scholar_profile_id=int(scholar_profile_id),
-        scholar_label=(display_name or scholar_id),
-        status=str(status),
-        reason=str(reason),
-        dropped_reason=dropped_reason,
-        attempt_count=int(attempt_count or 0),
-        resume_cstart=int(resume_cstart or 0),
-        next_attempt_dt=next_attempt_dt,
-        updated_at=updated_at,
-        last_error=last_error,
-        last_run_id=int(last_run_id) if last_run_id is not None else None,
-    )
+    return _queue_list_item_from_row(row)
 
 
 async def retry_queue_item_for_user(

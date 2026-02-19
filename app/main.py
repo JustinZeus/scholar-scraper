@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -22,6 +23,9 @@ from app.logging_config import configure_logging, parse_redact_fields
 from app.security.csrf import CSRFMiddleware
 from app.services.scheduler import SchedulerService
 from app.settings import settings
+
+logger = logging.getLogger(__name__)
+BUILD_MARKER = "2026-02-19.phase2.direct-pdf-import-export-dashboard-sync"
 
 configure_logging(
     level=settings.log_level,
@@ -45,8 +49,22 @@ scheduler_service = SchedulerService(
 )
 
 
+def _log_startup_build_marker() -> None:
+    logger.info(
+        "app.startup_build_marker",
+        extra={
+            "event": "app.startup_build_marker",
+            "build_marker": BUILD_MARKER,
+            "frontend_enabled": settings.frontend_enabled,
+            "scheduler_enabled": settings.scheduler_enabled,
+            "log_format": settings.log_format,
+        },
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _log_startup_build_marker()
     await scheduler_service.start()
     yield
     await scheduler_service.stop()

@@ -79,6 +79,18 @@ SHOW_MORE_BUTTON_RE = re.compile(
     r"<button\b[^>]*\bid\s*=\s*['\"]gsc_bpf_more['\"][^>]*>",
     re.I | re.S,
 )
+PROFILE_ROW_PARSER_DIRECT_MARKERS = (
+    "gs_ggs",
+    "gs_ggsd",
+    "gs_ggsa",
+    "gs_or_ggsm",
+)
+PROFILE_ROW_DIRECT_LABEL_TOKENS = (
+    "pdf",
+    "[pdf]",
+    "full text",
+    "download",
+)
 
 
 class ParseState(StrEnum):
@@ -98,6 +110,7 @@ class PublicationCandidate:
     citation_count: int | None
     authors_text: str | None
     venue_text: str | None
+    pdf_url: str | None
 
 
 @dataclass(frozen=True)
@@ -174,6 +187,7 @@ class ScholarRowParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.title_href: str | None = None
+        self.direct_download_href: str | None = None
         self.title_parts: list[str] = []
         self.citation_parts: list[str] = []
         self.year_parts: list[str] = []
@@ -183,6 +197,13 @@ class ScholarRowParser(HTMLParser):
         self._citation_depth = 0
         self._year_depth = 0
         self._gray_stack: list[dict[str, Any]] = []
+        self._direct_marker_depth = 0
+        self._aux_link_stack: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _contains_direct_marker(classes: str) -> bool:
+        lowered = classes.lower()
+        return any(marker in lowered for marker in PROFILE_ROW_PARSER_DIRECT_MARKERS)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._title_depth > 0:
@@ -193,8 +214,14 @@ class ScholarRowParser(HTMLParser):
             self._year_depth += 1
         if self._gray_stack:
             self._gray_stack[-1]["depth"] += 1
+        if self._direct_marker_depth > 0:
+            self._direct_marker_depth += 1
+        if self._aux_link_stack:
+            self._aux_link_stack[-1]["depth"] += 1
 
         classes = attr_class(attrs)
+        if tag in {"div", "span"} and self._contains_direct_marker(classes):
+            self._direct_marker_depth = 1
 
         if tag == "a" and "gsc_a_at" in classes:
             self._title_depth = 1
@@ -213,6 +240,16 @@ class ScholarRowParser(HTMLParser):
             self._gray_stack.append({"depth": 1, "parts": []})
             return
 
+        if tag == "a":
+            self._aux_link_stack.append(
+                {
+                    "depth": 1,
+                    "href": attr_href(attrs),
+                    "classes": classes,
+                    "parts": [],
+                }
+            )
+
     def handle_data(self, data: str) -> None:
         if self._title_depth > 0:
             self.title_parts.append(data)
@@ -222,6 +259,21 @@ class ScholarRowParser(HTMLParser):
             self.year_parts.append(data)
         if self._gray_stack:
             self._gray_stack[-1]["parts"].append(data)
+        if self._aux_link_stack:
+            self._aux_link_stack[-1]["parts"].append(data)
+
+    def _capture_direct_download_href(self, link: dict[str, Any]) -> None:
+        if self.direct_download_href:
+            return
+        href = link.get("href")
+        if not isinstance(href, str) or not href.strip():
+            return
+        label = normalize_space("".join(link.get("parts", []))).lower()
+        classes = str(link.get("classes", "")).lower()
+        label_match = any(token in label for token in PROFILE_ROW_DIRECT_LABEL_TOKENS)
+        marker_match = self._contains_direct_marker(classes) or self._direct_marker_depth > 0
+        if label_match or marker_match:
+            self.direct_download_href = href.strip()
 
     def handle_endtag(self, _tag: str) -> None:
         if self._title_depth > 0:
@@ -237,6 +289,13 @@ class ScholarRowParser(HTMLParser):
                 if text:
                     self.gray_texts.append(text)
                 self._gray_stack.pop()
+        if self._aux_link_stack:
+            self._aux_link_stack[-1]["depth"] -= 1
+            if self._aux_link_stack[-1]["depth"] == 0:
+                self._capture_direct_download_href(self._aux_link_stack[-1])
+                self._aux_link_stack.pop()
+        if self._direct_marker_depth > 0:
+            self._direct_marker_depth -= 1
 
 
 def extract_rows(html: str) -> list[str]:
@@ -302,37 +361,60 @@ def parse_citation_count(parts: list[str]) -> int | None:
     return int(match.group(0))
 
 
+def _parse_publication_row(row_html: str) -> tuple[PublicationCandidate | None, list[str]]:
+    parser = ScholarRowParser()
+    parser.feed(row_html)
+    warnings: list[str] = []
+    title = normalize_space("".join(parser.title_parts))
+    if not title:
+        warnings.append("row_missing_title")
+        return None, warnings
+    if not parser.title_href:
+        warnings.append("row_missing_title_href")
+
+    citation_text = normalize_space(" ".join(parser.citation_parts))
+    citation_count = parse_citation_count(parser.citation_parts)
+    if citation_text and citation_count is None:
+        warnings.append("layout_row_citation_unparseable")
+
+    year_text = normalize_space(" ".join(parser.year_parts))
+    year = parse_year(parser.year_parts)
+    if year_text and year is None:
+        warnings.append("layout_row_year_unparseable")
+
+    authors_text = parser.gray_texts[0] if len(parser.gray_texts) > 0 else None
+    venue_text = parser.gray_texts[1] if len(parser.gray_texts) > 1 else None
+    return (
+        PublicationCandidate(
+            title=title,
+            title_url=parser.title_href,
+            cluster_id=parse_cluster_id_from_href(parser.title_href),
+            year=year,
+            citation_count=citation_count,
+            authors_text=authors_text,
+            venue_text=venue_text,
+            pdf_url=build_absolute_scholar_url(parser.direct_download_href),
+        ),
+        warnings,
+    )
+
+
 def parse_publications(html: str) -> tuple[list[PublicationCandidate], list[str]]:
     rows = extract_rows(html)
     warnings: list[str] = []
     publications: list[PublicationCandidate] = []
 
     for row_html in rows:
-        parser = ScholarRowParser()
-        parser.feed(row_html)
-
-        title = normalize_space("".join(parser.title_parts))
-        if not title:
-            warnings.append("row_missing_title")
+        publication, row_warnings = _parse_publication_row(row_html)
+        warnings.extend(row_warnings)
+        if publication is None:
             continue
-
-        authors_text = parser.gray_texts[0] if len(parser.gray_texts) > 0 else None
-        venue_text = parser.gray_texts[1] if len(parser.gray_texts) > 1 else None
-
-        publications.append(
-            PublicationCandidate(
-                title=title,
-                title_url=parser.title_href,
-                cluster_id=parse_cluster_id_from_href(parser.title_href),
-                year=parse_year(parser.year_parts),
-                citation_count=parse_citation_count(parser.citation_parts),
-                authors_text=authors_text,
-                venue_text=venue_text,
-            )
-        )
+        publications.append(publication)
 
     if not rows:
         warnings.append("no_rows_detected")
+    if rows and not publications:
+        warnings.append("layout_all_rows_unparseable")
 
     return publications, sorted(set(warnings))
 
@@ -635,11 +717,35 @@ def classify_block_or_captcha_reason(
     return None
 
 
+def _warnings_contain(warnings: list[str], code: str) -> bool:
+    return any(item == code for item in warnings)
+
+
+def _has_layout_row_failure(marker_counts: dict[str, int], warnings: list[str]) -> bool:
+    if _warnings_contain(warnings, "layout_all_rows_unparseable"):
+        return True
+    if marker_counts.get("gsc_a_tr", 0) <= 0:
+        return False
+    if _warnings_contain(warnings, "row_missing_title"):
+        return True
+    return marker_counts.get("gsc_a_at", 0) <= 0
+
+
+def _first_layout_warning(warnings: list[str]) -> str | None:
+    for warning in warnings:
+        if warning.startswith("layout_"):
+            return warning
+    return None
+
+
 def detect_state(
     fetch_result: FetchResult,
     publications: list[PublicationCandidate],
     marker_counts: dict[str, int],
     *,
+    warnings: list[str],
+    has_show_more_button_flag: bool,
+    articles_range: str | None,
     visible_text: str,
 ) -> tuple[ParseState, str]:
     if fetch_result.status_code is None:
@@ -659,6 +765,16 @@ def detect_state(
 
     if not publications and any(keyword in visible_text for keyword in NO_RESULTS_KEYWORDS):
         return ParseState.NO_RESULTS, "no_results_keyword_detected"
+
+    layout_warning = _first_layout_warning(warnings)
+    if layout_warning is not None:
+        return ParseState.LAYOUT_CHANGED, layout_warning
+
+    if _has_layout_row_failure(marker_counts, warnings):
+        return ParseState.LAYOUT_CHANGED, "layout_publication_rows_unparseable"
+
+    if has_show_more_button_flag and not articles_range:
+        return ParseState.LAYOUT_CHANGED, "layout_show_more_without_articles_range"
 
     if not publications:
         has_profile_markers = marker_counts.get("gsc_prf_in", 0) > 0
@@ -699,7 +815,7 @@ def detect_author_search_state(
         has_search_markers = marker_counts.get("gsc_1usr", 0) > 0 or marker_counts.get("gs_ai_name", 0) > 0
         if not has_search_markers:
             return ParseState.NO_RESULTS, "no_search_candidates_detected"
-        return ParseState.OK, "search_markers_present_with_empty_results"
+        return ParseState.LAYOUT_CHANGED, "layout_author_candidates_unparseable"
 
     return ParseState.OK, "author_candidates_extracted"
 
@@ -711,6 +827,7 @@ def parse_profile_page(fetch_result: FetchResult) -> ParsedProfilePage:
 
     show_more = has_show_more_button(fetch_result.body)
     operation_error_banner = has_operation_error_banner(fetch_result.body)
+    articles_range = extract_articles_range(fetch_result.body)
 
     if show_more:
         warnings.append("possible_partial_page_show_more_present")
@@ -723,6 +840,9 @@ def parse_profile_page(fetch_result: FetchResult) -> ParsedProfilePage:
         fetch_result,
         publications,
         marker_counts,
+        warnings=warnings,
+        has_show_more_button_flag=show_more,
+        articles_range=articles_range,
         visible_text=visible_text,
     )
 
@@ -736,7 +856,7 @@ def parse_profile_page(fetch_result: FetchResult) -> ParsedProfilePage:
         warnings=warnings,
         has_show_more_button=show_more,
         has_operation_error_banner=operation_error_banner,
-        articles_range=extract_articles_range(fetch_result.body),
+        articles_range=articles_range,
     )
 
 

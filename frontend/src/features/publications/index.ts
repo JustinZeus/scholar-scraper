@@ -11,6 +11,7 @@ export interface PublicationItem {
   citation_count: number;
   venue_text: string | null;
   pub_url: string | null;
+  pdf_url: string | null;
   is_read: boolean;
   first_seen_at: string;
   is_new_in_latest_run: boolean;

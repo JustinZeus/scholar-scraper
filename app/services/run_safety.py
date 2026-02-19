@@ -146,6 +146,63 @@ def register_cooldown_blocked_start(
     return get_safety_state_payload(settings, now_utc=now)
 
 
+def _update_run_counters(
+    *,
+    counters: dict[str, Any],
+    run_id: int,
+    blocked_failure_count: int,
+    network_failure_count: int,
+) -> tuple[int, int]:
+    bounded_blocked_failures = max(0, int(blocked_failure_count))
+    bounded_network_failures = max(0, int(network_failure_count))
+    counters[_COUNTER_LAST_BLOCKED_FAILURE_COUNT] = bounded_blocked_failures
+    counters[_COUNTER_LAST_NETWORK_FAILURE_COUNT] = bounded_network_failures
+    counters[_COUNTER_LAST_EVALUATED_RUN_ID] = int(run_id)
+    counters[_COUNTER_CONSECUTIVE_BLOCKED_RUNS] = (
+        int(counters[_COUNTER_CONSECUTIVE_BLOCKED_RUNS]) + 1
+        if bounded_blocked_failures > 0
+        else 0
+    )
+    counters[_COUNTER_CONSECUTIVE_NETWORK_RUNS] = (
+        int(counters[_COUNTER_CONSECUTIVE_NETWORK_RUNS]) + 1
+        if bounded_network_failures > 0
+        else 0
+    )
+    return bounded_blocked_failures, bounded_network_failures
+
+
+def _resolve_cooldown_trigger(
+    *,
+    blocked_failures: int,
+    network_failures: int,
+    blocked_failure_threshold: int,
+    network_failure_threshold: int,
+    blocked_cooldown_seconds: int,
+    network_cooldown_seconds: int,
+) -> tuple[str | None, int]:
+    if blocked_failures >= max(1, int(blocked_failure_threshold)):
+        return COOLDOWN_REASON_BLOCKED_FAILURE_THRESHOLD, max(60, int(blocked_cooldown_seconds))
+    if network_failures >= max(1, int(network_failure_threshold)):
+        return COOLDOWN_REASON_NETWORK_FAILURE_THRESHOLD, max(60, int(network_cooldown_seconds))
+    return None, 0
+
+
+def _apply_cooldown_decision(
+    *,
+    settings: UserSetting,
+    counters: dict[str, Any],
+    now: datetime,
+    reason: str | None,
+    cooldown_seconds: int,
+) -> None:
+    if reason is None:
+        clear_expired_cooldown(settings, now_utc=now)
+        return
+    settings.scrape_cooldown_reason = reason
+    settings.scrape_cooldown_until = now + timedelta(seconds=max(60, int(cooldown_seconds)))
+    counters[_COUNTER_COOLDOWN_ENTRY_COUNT] = int(counters[_COUNTER_COOLDOWN_ENTRY_COUNT]) + 1
+
+
 def apply_run_safety_outcome(
     settings: UserSetting,
     *,
@@ -160,41 +217,27 @@ def apply_run_safety_outcome(
 ) -> tuple[dict[str, Any], str | None]:
     now = now_utc or _utcnow()
     counters = _counters_from_state(settings)
-
-    bounded_blocked_failures = max(0, int(blocked_failure_count))
-    bounded_network_failures = max(0, int(network_failure_count))
-
-    counters[_COUNTER_LAST_BLOCKED_FAILURE_COUNT] = bounded_blocked_failures
-    counters[_COUNTER_LAST_NETWORK_FAILURE_COUNT] = bounded_network_failures
-    counters[_COUNTER_LAST_EVALUATED_RUN_ID] = int(run_id)
-    counters[_COUNTER_CONSECUTIVE_BLOCKED_RUNS] = (
-        int(counters[_COUNTER_CONSECUTIVE_BLOCKED_RUNS]) + 1
-        if bounded_blocked_failures > 0
-        else 0
+    blocked_failures, network_failures = _update_run_counters(
+        counters=counters,
+        run_id=run_id,
+        blocked_failure_count=blocked_failure_count,
+        network_failure_count=network_failure_count,
     )
-    counters[_COUNTER_CONSECUTIVE_NETWORK_RUNS] = (
-        int(counters[_COUNTER_CONSECUTIVE_NETWORK_RUNS]) + 1
-        if bounded_network_failures > 0
-        else 0
+    reason, cooldown_seconds = _resolve_cooldown_trigger(
+        blocked_failures=blocked_failures,
+        network_failures=network_failures,
+        blocked_failure_threshold=blocked_failure_threshold,
+        network_failure_threshold=network_failure_threshold,
+        blocked_cooldown_seconds=blocked_cooldown_seconds,
+        network_cooldown_seconds=network_cooldown_seconds,
     )
-
-    reason: str | None = None
-    cooldown_seconds = 0
-
-    if bounded_blocked_failures >= max(1, int(blocked_failure_threshold)):
-        reason = COOLDOWN_REASON_BLOCKED_FAILURE_THRESHOLD
-        cooldown_seconds = max(60, int(blocked_cooldown_seconds))
-    elif bounded_network_failures >= max(1, int(network_failure_threshold)):
-        reason = COOLDOWN_REASON_NETWORK_FAILURE_THRESHOLD
-        cooldown_seconds = max(60, int(network_cooldown_seconds))
-
-    if reason is not None:
-        settings.scrape_cooldown_reason = reason
-        settings.scrape_cooldown_until = now + timedelta(seconds=cooldown_seconds)
-        counters[_COUNTER_COOLDOWN_ENTRY_COUNT] = int(counters[_COUNTER_COOLDOWN_ENTRY_COUNT]) + 1
-    else:
-        clear_expired_cooldown(settings, now_utc=now)
-
+    _apply_cooldown_decision(
+        settings=settings,
+        counters=counters,
+        now=now,
+        reason=reason,
+        cooldown_seconds=cooldown_seconds,
+    )
     settings.scrape_safety_state = counters
     return get_safety_state_payload(settings, now_utc=now), reason
 

@@ -186,6 +186,74 @@ class ScholarImageUrlUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ScholarExportItemData(BaseModel):
+    scholar_id: str
+    display_name: str | None = None
+    is_enabled: bool = True
+    profile_image_override_url: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PublicationExportItemData(BaseModel):
+    scholar_id: str
+    cluster_id: str | None = None
+    fingerprint_sha256: str | None = None
+    title: str
+    year: int | None = None
+    citation_count: int = 0
+    author_text: str | None = None
+    venue_text: str | None = None
+    pub_url: str | None = None
+    pdf_url: str | None = None
+    is_read: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DataExportData(BaseModel):
+    schema_version: int
+    exported_at: str
+    scholars: list[ScholarExportItemData]
+    publications: list[PublicationExportItemData]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DataExportEnvelope(BaseModel):
+    data: DataExportData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DataImportRequest(BaseModel):
+    schema_version: int | None = None
+    scholars: list[ScholarExportItemData] = Field(default_factory=list)
+    publications: list[PublicationExportItemData] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DataImportResultData(BaseModel):
+    scholars_created: int
+    scholars_updated: int
+    publications_created: int
+    publications_updated: int
+    links_created: int
+    links_updated: int
+    skipped_records: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DataImportEnvelope(BaseModel):
+    data: DataImportResultData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class RunListItemData(BaseModel):
     id: int
     trigger_type: str
@@ -505,6 +573,7 @@ class PublicationItemData(BaseModel):
     citation_count: int
     venue_text: str | None
     pub_url: str | None
+    pdf_url: str | None
     is_read: bool
     first_seen_at: datetime
     is_new_in_latest_run: bool

@@ -78,6 +78,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 - Scholar tracking is user-scoped: each account can track the same Scholar ID independently.
 - Publications are shared/global records deduplicated by Scholar cluster ID and normalized fingerprint.
 - Per-account visibility and read state is stored on scholar-publication links, not on the global publication row.
+- Publication records include both canonical Scholar detail URLs (`pub_url`) and direct download targets (`pdf_url`) when available.
+
+## Backend Architecture (Refactored)
+
+- `app/services/ingestion.py`: run orchestration, page retry/pagination logic, publication upsert/dedup, safety counters, continuation queue sync.
+- `app/services/scholar_parser.py`: strict DOM parsing with explicit layout-state detection and fail-fast warning codes for malformed Scholar markup.
+- `app/services/scheduler.py`: automatic/scheduled ingestion runner plus continuation queue draining and retry/drop policy.
+- `app/services/publications.py`: user-scoped publication listing/read-state update queries used by dashboard/publication UIs.
+- `app/services/import_export.py`: JSON import/export for tracked scholars and publication link state.
 
 ## Name Search Status
 
@@ -272,7 +281,13 @@ Scheduled fixture probes run in GitHub Actions via `.github/workflows/scheduled-
 - `GET /api/v1/publications` supports `mode=all|unread|latest` (plus temporary alias `mode=new`).
 - `unread` = actionable read-state (`is_read=false`).
 - `latest` = discovery-state (`first seen in the latest completed check`).
+- Publications include `pub_url` and `pdf_url` in API responses. `pdf_url` is a direct-download target extracted from Scholar result-side links when present.
 - Response counters:
   - `unread_count`: unread publications in current scope.
   - `latest_count`: publications discovered in latest completed check.
   - `new_count`: compatibility alias for `latest_count` (temporary).
+
+### Scholar Data Portability
+
+- `GET /api/v1/scholars/export`: exports tracked scholars plus scholar-publication link data as JSON.
+- `POST /api/v1/scholars/import`: imports that JSON payload, upserting scholars, global publication records, and per-scholar read state.

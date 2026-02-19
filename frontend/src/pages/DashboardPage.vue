@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import { fetchDashboardSnapshot, type DashboardSnapshot } from "@/features/dashboard";
 import { ApiRequestError } from "@/lib/api/errors";
@@ -14,7 +14,7 @@ import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import { useAuthStore } from "@/stores/auth";
-import { useRunStatusStore } from "@/stores/run_status";
+import { RUN_STATUS_POLL_INTERVAL_MS, useRunStatusStore } from "@/stores/run_status";
 import { useUserSettingsStore } from "@/stores/user_settings";
 
 const loading = ref(true);
@@ -26,6 +26,7 @@ const refreshingAfterCompletion = ref(false);
 const auth = useAuthStore();
 const runStatus = useRunStatusStore();
 const userSettings = useUserSettingsStore();
+let latestRunSyncTimer: ReturnType<typeof setInterval> | null = null;
 
 const isStartBlocked = computed(
   () =>
@@ -118,6 +119,39 @@ function formatDate(value: string | null): string {
   return asDate.toLocaleString();
 }
 
+function shouldRefreshAfterRunChange(
+  nextRun: typeof runStatus.latestRun,
+  previousRun: typeof runStatus.latestRun,
+): boolean {
+  if (!nextRun || !previousRun) {
+    return false;
+  }
+  if (nextRun.status === "running") {
+    return false;
+  }
+  if (nextRun.id !== previousRun.id) {
+    return true;
+  }
+  return previousRun.status === "running";
+}
+
+function startLatestRunSyncLoop(): void {
+  if (latestRunSyncTimer !== null) {
+    return;
+  }
+  latestRunSyncTimer = setInterval(() => {
+    void runStatus.syncLatest();
+  }, RUN_STATUS_POLL_INTERVAL_MS);
+}
+
+function stopLatestRunSyncLoop(): void {
+  if (latestRunSyncTimer === null) {
+    return;
+  }
+  clearInterval(latestRunSyncTimer);
+  latestRunSyncTimer = null;
+}
+
 async function loadSnapshot(): Promise<void> {
   loading.value = true;
   errorMessage.value = null;
@@ -172,6 +206,12 @@ async function onTriggerRun(): Promise<void> {
 
 onMounted(() => {
   void loadSnapshot();
+  void runStatus.syncLatest();
+  startLatestRunSyncLoop();
+});
+
+onUnmounted(() => {
+  stopLatestRunSyncLoop();
 });
 
 watch(
@@ -180,13 +220,7 @@ watch(
     if (refreshingAfterCompletion.value) {
       return;
     }
-    if (!nextRun || !previousRun) {
-      return;
-    }
-    if (nextRun.id !== previousRun.id) {
-      return;
-    }
-    if (previousRun.status !== "running" || nextRun.status === "running") {
+    if (!shouldRefreshAfterRunChange(nextRun, previousRun)) {
       return;
     }
 
