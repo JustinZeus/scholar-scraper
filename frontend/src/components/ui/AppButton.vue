@@ -16,24 +16,24 @@ const props = withDefaults(
 
 const variantClass = computed(() => {
   if (props.variant === "secondary") {
-    return "border-zinc-300 bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700";
+    return "border-action-secondary-border bg-action-secondary-bg text-action-secondary-text shadow-sm hover:border-action-secondary-hover-border hover:bg-action-secondary-hover-bg hover:text-action-secondary-hover-text";
   }
 
   if (props.variant === "ghost") {
-    return "border-zinc-300 bg-transparent text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800";
+    return "border-action-ghost-border bg-action-ghost-bg text-action-ghost-text hover:border-action-ghost-hover-border hover:bg-action-ghost-hover-bg hover:text-action-ghost-hover-text";
   }
 
   if (props.variant === "danger") {
-    return "border-rose-300 bg-rose-100 text-rose-800 hover:bg-rose-200 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200 dark:hover:bg-rose-900/70";
+    return "border-action-danger-border bg-action-danger-bg text-action-danger-text shadow-sm hover:border-action-danger-hover-border hover:bg-action-danger-hover-bg hover:text-action-danger-hover-text";
   }
 
-  return "border-brand-700 bg-brand-700 text-white hover:bg-brand-600 dark:border-brand-400 dark:bg-brand-400 dark:text-zinc-950 dark:hover:bg-brand-300";
+  return "border-action-primary-border bg-action-primary-bg text-action-primary-text shadow-sm hover:border-action-primary-hover-border hover:bg-action-primary-hover-bg hover:text-action-primary-hover-text";
 });
 </script>
 
 <template>
   <button
-    class="inline-flex min-h-10 items-center justify-center rounded-lg border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:focus-visible:ring-brand-400 dark:focus-visible:ring-offset-zinc-950"
+    class="inline-flex min-h-10 items-center justify-center rounded-lg border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset disabled:cursor-not-allowed disabled:opacity-60"
     :class="variantClass"
     :type="props.type"
     :disabled="props.disabled"

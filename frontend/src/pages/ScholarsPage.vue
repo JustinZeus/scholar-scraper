@@ -2,15 +2,15 @@
 import { computed, onMounted, ref } from "vue";
 
 import AppPage from "@/components/layout/AppPage.vue";
-import RunStatusBadge from "@/components/patterns/RunStatusBadge.vue";
+import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
+import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import AppAlert from "@/components/ui/AppAlert.vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
-import AppEmptyState from "@/components/ui/AppEmptyState.vue";
+import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppInput from "@/components/ui/AppInput.vue";
 import AppModal from "@/components/ui/AppModal.vue";
-import AppSkeleton from "@/components/ui/AppSkeleton.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import {
   clearScholarImage,
@@ -25,6 +25,7 @@ import {
   type ScholarSearchCandidate,
   type ScholarSearchResult,
 } from "@/features/scholars";
+import ScholarAvatar from "@/features/scholars/components/ScholarAvatar.vue";
 import { ApiRequestError } from "@/lib/api/errors";
 
 const loading = ref(true);
@@ -38,7 +39,6 @@ const activeScholarSettingsId = ref<number | null>(null);
 
 const scholars = ref<ScholarProfile[]>([]);
 const imageUrlDraftByScholarId = ref<Record<number, string>>({});
-const failedImageByKey = ref<Record<string, boolean>>({});
 
 const scholarBatchInput = ref("");
 const searchQuery = ref("");
@@ -52,34 +52,40 @@ const successMessage = ref<string | null>(null);
 
 const SCHOLAR_ID_PATTERN = /^[a-zA-Z0-9_-]{12}$/;
 const URL_USER_PARAM_PATTERN = /(?:\?|&)user=([a-zA-Z0-9_-]{12})(?:&|#|$)/i;
+const nameSearchWip = true;
 
 const trackedScholarIds = computed(() => new Set(scholars.value.map((item) => item.scholar_id)));
 const activeScholarSettings = computed(
   () => scholars.value.find((item) => item.id === activeScholarSettingsId.value) ?? null,
 );
+const parsedBatchCount = computed(() => parseScholarIds(scholarBatchInput.value).length);
+const searchHasRun = computed(() => searchResult.value !== null);
 const searchIsDegraded = computed(() => {
   if (!searchResult.value) {
     return false;
   }
   return searchResult.value.state === "blocked_or_captcha" || searchResult.value.state === "network_error";
 });
-
-function formatDate(value: string | null, compact = false): string {
-  if (!value) {
-    return "n/a";
+const searchStateTone = computed(() => {
+  const result = searchResult.value;
+  if (!result) {
+    return "neutral" as const;
   }
-  const asDate = new Date(value);
-  if (Number.isNaN(asDate.getTime())) {
-    return value;
+  if (result.state === "ok") {
+    return "success" as const;
   }
-  if (compact) {
-    return asDate.toLocaleString(undefined, {
-      dateStyle: "short",
-      timeStyle: "short",
-    });
+  if (result.state === "blocked_or_captcha" || result.state === "network_error") {
+    return "warning" as const;
   }
-  return asDate.toLocaleString();
-}
+  return "neutral" as const;
+});
+const emptySearchCandidates = computed(() => {
+  const result = searchResult.value;
+  if (!result) {
+    return false;
+  }
+  return result.candidates.length === 0;
+});
 
 function scholarProfileUrl(scholarId: string): string {
   return `https://scholar.google.com/citations?hl=en&user=${encodeURIComponent(scholarId)}`;
@@ -136,58 +142,6 @@ function parseScholarIds(raw: string): string[] {
   }
 
   return ordered;
-}
-
-function formatImageSource(value: ScholarProfile["profile_image_source"]): string {
-  if (value === "upload") {
-    return "Uploaded";
-  }
-  if (value === "override") {
-    return "Custom URL";
-  }
-  if (value === "scraped") {
-    return "Scraped";
-  }
-  return "Fallback";
-}
-
-function sourceTone(value: ScholarProfile["profile_image_source"]): "neutral" | "info" | "success" {
-  if (value === "upload") {
-    return "success";
-  }
-  if (value === "override" || value === "scraped") {
-    return "info";
-  }
-  return "neutral";
-}
-
-function makeInitials(label: string | null | undefined, scholarId: string): string {
-  const source = (label || "").trim();
-  if (source.length === 0) {
-    return scholarId.slice(0, 2).toUpperCase();
-  }
-
-  const tokens = source.split(/\s+/).filter(Boolean);
-  if (tokens.length === 1) {
-    return tokens[0].slice(0, 2).toUpperCase();
-  }
-
-  return `${tokens[0].charAt(0)}${tokens[1].charAt(0)}`.toUpperCase();
-}
-
-function imageKey(prefix: string, id: string | number, imageUrl: string | null): string {
-  return `${prefix}:${String(id)}:${imageUrl || "none"}`;
-}
-
-function canRenderImage(prefix: string, id: string | number, imageUrl: string | null): boolean {
-  if (!imageUrl) {
-    return false;
-  }
-  return !failedImageByKey.value[imageKey(prefix, id, imageUrl)];
-}
-
-function markImageFailed(prefix: string, id: string | number, imageUrl: string | null): void {
-  failedImageByKey.value[imageKey(prefix, id, imageUrl)] = true;
 }
 
 function scholarLabel(profile: ScholarProfile): string {
@@ -311,6 +265,11 @@ async function onAddScholars(): Promise<void> {
 }
 
 async function onSearchByName(): Promise<void> {
+  if (nameSearchWip) {
+    searchErrorMessage.value = "Search by name is temporarily disabled while reliability hardening is in progress.";
+    searchErrorRequestId.value = null;
+    return;
+  }
   searchingByName.value = true;
   searchErrorMessage.value = null;
   searchErrorRequestId.value = null;
@@ -502,339 +461,287 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppPage title="Scholars" subtitle="Track scholars and manage profile behavior with less noise.">
-    <div class="flex justify-end">
-      <AppButton variant="secondary" @click="loadScholars" :disabled="loading || saving || searchingByName">
-        {{ loading ? "Refreshing..." : "Refresh" }}
-      </AppButton>
-    </div>
+  <AppPage
+    title="Scholars"
+    subtitle="Add and maintain the Google Scholar profiles you want Scholarr to monitor."
+  >
+    <RequestStateAlerts
+      :success-message="successMessage"
+      success-title="Scholar update complete"
+      :error-message="errorMessage"
+      :error-request-id="errorRequestId"
+      error-title="Scholar request failed"
+      @dismiss-success="successMessage = null"
+    />
 
-    <AppAlert v-if="successMessage" tone="success" dismissible @dismiss="successMessage = null">
-      <template #title>Scholar update complete</template>
-      <p>{{ successMessage }}</p>
-    </AppAlert>
-
-    <AppAlert v-if="errorMessage" tone="danger">
-      <template #title>Scholar request failed</template>
-      <p>{{ errorMessage }}</p>
-      <p class="text-secondary">Request ID: {{ errorRequestId || "n/a" }}</p>
-    </AppAlert>
-
-    <section class="grid gap-4 xl:grid-cols-[minmax(0,34rem)_minmax(0,1fr)]">
+    <section class="grid gap-4 xl:grid-cols-2">
       <div class="grid content-start gap-4">
         <AppCard class="space-y-4">
           <div class="space-y-1">
-            <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Add Scholars</h2>
-            <p class="text-sm text-secondary">
-              Paste one or many Scholar IDs or profile URLs. Duplicate and already-tracked IDs are ignored per response.
-            </p>
+            <div class="flex items-center gap-1">
+              <h2 class="text-lg font-semibold text-ink-primary">Add Scholar Profiles</h2>
+              <AppHelpHint
+                text="A scholar profile is a Google Scholar author page that Scholarr will monitor for publication changes."
+              />
+            </div>
+            <p class="text-sm text-secondary">Paste one or more Scholar IDs or profile URLs and add them in one action.</p>
           </div>
 
           <form class="grid gap-3" @submit.prevent="onAddScholars">
-            <label class="grid gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            <label class="grid gap-2 text-sm font-medium text-ink-secondary" for="scholar-batch-input">
               <span>Scholar IDs or profile URLs</span>
               <textarea
                 id="scholar-batch-input"
                 v-model="scholarBatchInput"
                 rows="5"
                 placeholder="A-UbBTPM15wL\nhttps://scholar.google.com/citations?hl=en&user=A-UbBTPM15wL"
-                class="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none ring-brand-300 transition placeholder:text-zinc-400 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:ring-brand-400 dark:focus-visible:ring-offset-zinc-950 dark:placeholder:text-zinc-500"
+                class="w-full rounded-lg border border-stroke-interactive bg-surface-input px-3 py-2 text-sm text-ink-primary outline-none ring-focus-ring transition placeholder:text-ink-muted focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
 
             <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="text-xs text-secondary">
+                Parsed IDs: <strong class="text-ink-primary">{{ parsedBatchCount }}</strong>
+              </p>
               <AppButton type="submit" :disabled="saving || loading">
                 {{ saving ? "Adding..." : "Add scholars" }}
               </AppButton>
-              <span class="text-xs text-secondary">Accepted pattern: <code>[a-zA-Z0-9_-]{12}</code></span>
             </div>
           </form>
         </AppCard>
 
-        <AppCard class="space-y-4">
-          <div class="space-y-1">
-            <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Search by Name</h2>
-            <p class="text-sm text-secondary">
-              Best-effort helper. For reliable adds, use Scholar URL/ID above.
-            </p>
+        <AppCard class="relative space-y-4 select-none">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div class="space-y-1">
+              <div class="flex items-center gap-1">
+                <h2 class="text-lg font-semibold text-ink-primary">Search by Name</h2>
+                <AppHelpHint text="This workflow is currently paused while anti-block reliability changes are finalized." />
+              </div>
+              <p class="text-sm text-secondary">This helper is paused while reliability hardening is completed.</p>
+            </div>
+            <AppHelpHint text="Name search is not currently supported in production. It is on the roadmap and will return after reliability hardening.">
+              <template #trigger>
+                <AppBadge tone="warning">WIP</AppBadge>
+              </template>
+            </AppHelpHint>
           </div>
 
-          <form class="flex flex-wrap items-center gap-2" @submit.prevent="onSearchByName">
+          <form class="pointer-events-none flex flex-wrap items-center gap-2 opacity-60">
             <div class="min-w-0 flex-1">
               <AppInput
                 id="scholar-search-name"
                 v-model="searchQuery"
                 placeholder="e.g. Geoffrey Hinton"
-                :disabled="searchingByName"
+                :disabled="nameSearchWip"
               />
             </div>
-            <AppButton type="submit" :disabled="searchingByName || searchQuery.trim().length < 2">
-              {{ searchingByName ? "Searching..." : "Search" }}
+            <AppButton type="button" :disabled="nameSearchWip">
+              Search
             </AppButton>
           </form>
+          <p class="text-xs text-secondary">
+            Direct Scholar ID/URL adds above remain the dependable path while this feature is in progress.
+          </p>
 
-          <AppAlert v-if="searchErrorMessage" tone="danger">
-            <template #title>Search failed</template>
-            <p>{{ searchErrorMessage }}</p>
-            <p class="text-secondary">Request ID: {{ searchErrorRequestId || "n/a" }}</p>
-          </AppAlert>
+          <RequestStateAlerts
+            :error-message="searchErrorMessage"
+            :error-request-id="searchErrorRequestId"
+            error-title="Search request failed"
+          />
 
-          <AppSkeleton v-else-if="searchingByName" :lines="4" />
+          <AsyncStateGate :loading="searchingByName" :loading-lines="4" :show-empty="false">
+            <template v-if="searchResult">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="text-sm text-secondary">
+                  {{ searchResult.candidates.length }} candidate{{ searchResult.candidates.length === 1 ? "" : "s" }}
+                  for <strong class="text-ink-primary">{{ searchResult.query }}</strong>
+                </p>
+                <AppBadge :tone="searchStateTone">{{ searchResult.state }}</AppBadge>
+              </div>
 
-          <template v-else-if="searchResult">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <p class="text-sm text-secondary">
-                {{ searchResult.candidates.length }} candidate{{ searchResult.candidates.length === 1 ? "" : "s" }} for
-                <strong class="text-zinc-900 dark:text-zinc-100">{{ searchResult.query }}</strong>
+              <p v-if="searchResult.state !== 'ok' || searchResult.warnings.length > 0" class="text-xs text-secondary">
+                <span>State reason: <code>{{ searchResult.state_reason }}</code></span>
+                <span v-if="searchResult.action_hint">. {{ searchResult.action_hint }}</span>
+                <span v-if="searchResult.warnings.length > 0">. Warnings: {{ searchResult.warnings.join(", ") }}</span>
               </p>
-              <AppBadge
-                :tone="
-                  searchResult.state === 'ok'
-                    ? 'success'
-                    : searchResult.state === 'blocked_or_captcha' || searchResult.state === 'network_error'
-                      ? 'warning'
-                      : 'neutral'
-                "
+
+              <AppAlert v-if="searchIsDegraded" tone="warning">
+                <template #title>Name search is degraded</template>
+                <p>
+                  This endpoint throttles aggressively to avoid blocks. Use Scholar URL/ID adds for dependable tracking.
+                </p>
+              </AppAlert>
+
+              <AsyncStateGate
+                :loading="false"
+                :show-empty="true"
+                :empty="emptySearchCandidates"
+                empty-title="No scholar matches returned"
+                empty-body="Try another query later or add directly by Scholar URL/ID."
               >
-                {{ searchResult.state }}
-              </AppBadge>
-            </div>
-            <p
-              v-if="searchResult.state !== 'ok' || searchResult.warnings.length > 0"
-              class="text-xs text-secondary"
-            >
-              <span>State reason: <code>{{ searchResult.state_reason }}</code></span>
-              <span v-if="searchResult.action_hint">. {{ searchResult.action_hint }}</span>
-              <span v-if="searchResult.warnings.length > 0">
-                . Warnings: {{ searchResult.warnings.join(", ") }}
-              </span>
-            </p>
-
-            <AppAlert v-if="searchIsDegraded" tone="warning">
-              <template #title>Name search is degraded</template>
-              <p>
-                To avoid blocks, this feature is throttled and may temporarily pause itself. Use Scholar URL/ID adds
-                for dependable tracking.
-              </p>
-            </AppAlert>
-
-            <AppEmptyState
-              v-if="searchResult.candidates.length === 0"
-              title="No scholar matches returned"
-              body="Try again later or paste Scholar profile URLs/IDs to continue safely."
-            />
-
-            <ul v-else class="grid gap-3">
-              <li
-                v-for="candidate in searchResult.candidates"
-                :key="candidate.scholar_id"
-                class="rounded-xl border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
-              >
-                <div class="flex items-start gap-3">
-                  <div
-                    class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-zinc-100 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                <ul class="grid gap-3">
+                  <li
+                    v-for="candidate in searchResult.candidates"
+                    :key="candidate.scholar_id"
+                    class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3"
                   >
-                    <img
-                      v-if="canRenderImage('candidate', candidate.scholar_id, candidate.profile_image_url)"
-                      :src="candidate.profile_image_url || ''"
-                      :alt="`${candidate.display_name} profile image`"
-                      class="h-full w-full object-cover"
-                      loading="lazy"
-                      referrerpolicy="no-referrer"
-                      @error="markImageFailed('candidate', candidate.scholar_id, candidate.profile_image_url)"
-                    />
-                    <span v-else>{{ makeInitials(candidate.display_name, candidate.scholar_id) }}</span>
-                  </div>
+                    <div class="flex items-start gap-3">
+                      <ScholarAvatar
+                        size="sm"
+                        :label="candidate.display_name"
+                        :scholar-id="candidate.scholar_id"
+                        :image-url="candidate.profile_image_url"
+                      />
 
-                  <div class="min-w-0 flex-1 space-y-1">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <strong class="text-sm text-zinc-900 dark:text-zinc-100">{{ candidate.display_name }}</strong>
-                      <code class="text-xs text-secondary">{{ candidate.scholar_id }}</code>
-                      <AppBadge v-if="trackedScholarIds.has(candidate.scholar_id)" tone="success">Tracked</AppBadge>
+                      <div class="min-w-0 flex-1 space-y-1">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <strong class="text-sm text-ink-primary">{{ candidate.display_name }}</strong>
+                          <code class="text-xs text-secondary">{{ candidate.scholar_id }}</code>
+                          <AppBadge v-if="trackedScholarIds.has(candidate.scholar_id)" tone="success">Tracked</AppBadge>
+                        </div>
+
+                        <p class="truncate text-xs text-secondary">{{ candidate.affiliation || "No affiliation provided" }}</p>
+
+                        <div class="flex flex-wrap items-center gap-2 text-xs text-secondary">
+                          <span v-if="candidate.email_domain">Email: {{ candidate.email_domain }}</span>
+                          <span v-if="candidate.cited_by_count !== null">Cited by: {{ candidate.cited_by_count }}</span>
+                        </div>
+                      </div>
+
+                      <div class="grid shrink-0 gap-2">
+                        <AppButton
+                          :disabled="trackedScholarIds.has(candidate.scholar_id) || addingCandidateScholarId === candidate.scholar_id"
+                          @click="onAddCandidate(candidate)"
+                        >
+                          {{ addingCandidateScholarId === candidate.scholar_id ? "Adding..." : "Add" }}
+                        </AppButton>
+                        <a :href="candidate.profile_url" target="_blank" rel="noreferrer" class="link-inline text-xs text-center">
+                          Open profile
+                        </a>
+                      </div>
                     </div>
-
-                    <p class="truncate text-xs text-secondary">
-                      {{ candidate.affiliation || "No affiliation provided" }}
-                    </p>
-
-                    <div class="flex flex-wrap items-center gap-2 text-xs text-secondary">
-                      <span v-if="candidate.email_domain">Email: {{ candidate.email_domain }}</span>
-                      <span v-if="candidate.cited_by_count !== null">Cited by: {{ candidate.cited_by_count }}</span>
-                    </div>
-
-                    <div class="flex flex-wrap items-center gap-1">
-                      <AppBadge v-for="interest in candidate.interests.slice(0, 3)" :key="interest" tone="neutral">
-                        {{ interest }}
-                      </AppBadge>
-                    </div>
-                  </div>
-
-                  <div class="grid shrink-0 gap-2">
-                    <AppButton
-                      :disabled="trackedScholarIds.has(candidate.scholar_id) || addingCandidateScholarId === candidate.scholar_id"
-                      @click="onAddCandidate(candidate)"
-                    >
-                      {{ addingCandidateScholarId === candidate.scholar_id ? "Adding..." : "Add" }}
-                    </AppButton>
-                    <a :href="candidate.profile_url" target="_blank" rel="noreferrer" class="link-inline text-xs text-center">
-                      Open profile
-                    </a>
-                  </div>
-                </div>
-              </li>
-            </ul>
-          </template>
-
-          <p v-else class="text-sm text-secondary">Run a name search to see matching scholar candidates.</p>
+                  </li>
+                </ul>
+              </AsyncStateGate>
+            </template>
+            <p v-else-if="!searchErrorMessage && !searchHasRun" class="text-sm text-secondary">
+              Run a name search to get candidates with one-click add actions.
+            </p>
+          </AsyncStateGate>
         </AppCard>
       </div>
 
       <AppCard class="space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Tracked Scholars</h2>
-          <span class="text-sm text-secondary">{{ scholars.length }} total</span>
+        <div class="space-y-3">
+          <div class="space-y-1">
+            <div class="flex items-center gap-1">
+              <h2 class="text-lg font-semibold text-ink-primary">Tracked Scholars</h2>
+              <AppHelpHint
+                text="Tracked scholars are active profile sources. Open Manage to control status, image overrides, and removal."
+              />
+            </div>
+            <p class="text-sm text-secondary">Review tracked profiles and open per-scholar settings when needed.</p>
+          </div>
+          <div
+            class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stroke-default bg-surface-card-muted/70 px-3 py-2"
+          >
+            <p class="text-xs font-medium uppercase tracking-wide text-secondary">Tracking status</p>
+            <div class="flex flex-wrap items-center gap-2">
+              <span
+                class="inline-flex min-h-10 items-center rounded-lg border border-state-info-border bg-state-info-bg px-3 text-sm font-semibold text-state-info-text"
+              >
+                {{ scholars.length }} tracked
+              </span>
+              <AppButton variant="secondary" :disabled="loading || saving" @click="loadScholars">
+                {{ loading ? "Refreshing..." : "Refresh" }}
+              </AppButton>
+            </div>
+          </div>
         </div>
 
-        <AppSkeleton v-if="loading" :lines="6" />
+        <AsyncStateGate
+          :loading="loading"
+          :loading-lines="6"
+          :empty="scholars.length === 0"
+          :show-empty="!errorMessage"
+          empty-title="No scholars tracked"
+          empty-body="Add a Scholar ID or URL to start ingestion tracking."
+        >
+          <div class="space-y-3">
+            <ul class="grid gap-3 lg:hidden">
+              <li
+                v-for="item in scholars"
+                :key="item.id"
+                class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3"
+              >
+                <div class="flex items-start gap-3">
+                  <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
 
-        <AppEmptyState
-          v-else-if="scholars.length === 0"
-          title="No scholars tracked"
-          body="Add a Scholar ID directly or search by name to start ingestion tracking."
-        />
-
-        <div v-else class="space-y-3">
-          <ul class="grid gap-3 lg:hidden">
-            <li
-              v-for="item in scholars"
-              :key="item.id"
-              class="rounded-xl border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
-            >
-              <div class="flex items-start gap-3">
-                <div
-                  class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-zinc-100 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-                >
-                  <img
-                    v-if="canRenderImage('scholar', item.id, item.profile_image_url)"
-                    :src="item.profile_image_url || ''"
-                    :alt="`${scholarLabel(item)} profile image`"
-                    class="h-full w-full object-cover"
-                    loading="lazy"
-                    referrerpolicy="no-referrer"
-                    @error="markImageFailed('scholar', item.id, item.profile_image_url)"
-                  />
-                  <span v-else>{{ makeInitials(item.display_name, item.scholar_id) }}</span>
-                </div>
-
-                <div class="min-w-0 flex-1 space-y-1">
-                  <p class="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{{ scholarLabel(item) }}</p>
-                  <p class="text-xs text-secondary"><code>{{ item.scholar_id }}</code></p>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <AppBadge :tone="item.is_enabled ? 'success' : 'warning'">
-                      {{ item.is_enabled ? "Enabled" : "Disabled" }}
-                    </AppBadge>
-                    <RunStatusBadge :status="item.last_run_status || 'unknown'" />
-                    <span class="text-xs text-secondary">{{ formatDate(item.last_run_dt, true) }}</span>
-                  </div>
-                  <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
-                    View publications
-                  </RouterLink>
-                </div>
-
-                <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
-              </div>
-            </li>
-          </ul>
-
-          <AppTable class="hidden lg:block" label="Scholars table">
-            <thead>
-              <tr>
-                <th scope="col">Scholar</th>
-                <th scope="col">Scholar ID</th>
-                <th scope="col">Enabled</th>
-                <th scope="col" class="w-[15rem]">Last run</th>
-                <th scope="col">Manage</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in scholars" :key="item.id">
-                <td>
-                  <div class="flex items-start gap-3">
-                    <div
-                      class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-zinc-100 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-                    >
-                      <img
-                        v-if="canRenderImage('scholar', item.id, item.profile_image_url)"
-                        :src="item.profile_image_url || ''"
-                        :alt="`${scholarLabel(item)} profile image`"
-                        class="h-full w-full object-cover"
-                        loading="lazy"
-                        referrerpolicy="no-referrer"
-                        @error="markImageFailed('scholar', item.id, item.profile_image_url)"
-                      />
-                      <span v-else>{{ makeInitials(item.display_name, item.scholar_id) }}</span>
+                  <div class="min-w-0 flex-1 space-y-1">
+                    <p class="truncate text-sm font-semibold text-ink-primary">{{ scholarLabel(item) }}</p>
+                    <div class="flex flex-wrap items-center gap-3">
+                      <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
+                        Publications
+                      </RouterLink>
+                      <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">
+                        Open profile
+                      </a>
                     </div>
+                  </div>
 
-                    <div class="grid min-w-0 gap-1">
-                      <strong class="truncate text-zinc-900 dark:text-zinc-100">{{ scholarLabel(item) }}</strong>
-                      <div class="flex flex-wrap items-center gap-2">
-                        <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
-                          Publications
-                        </RouterLink>
-                        <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">
-                          Open profile
-                        </a>
-                        <AppBadge :tone="sourceTone(item.profile_image_source)">
-                          {{ formatImageSource(item.profile_image_source) }}
-                        </AppBadge>
+                  <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
+                </div>
+              </li>
+            </ul>
+
+            <AppTable class="hidden lg:block" label="Tracked scholars table">
+              <thead>
+                <tr>
+                  <th scope="col">Scholar</th>
+                  <th scope="col" class="w-[11rem]">Manage</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in scholars" :key="item.id">
+                  <td>
+                    <div class="flex items-start gap-3">
+                      <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
+
+                      <div class="grid min-w-0 gap-1">
+                        <strong class="truncate text-ink-primary">{{ scholarLabel(item) }}</strong>
+                        <div class="flex flex-wrap items-center gap-3">
+                          <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
+                            Publications
+                          </RouterLink>
+                          <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">
+                            Open profile
+                          </a>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </td>
-                <td><code class="text-xs">{{ item.scholar_id }}</code></td>
-                <td>
-                  <AppBadge :tone="item.is_enabled ? 'success' : 'warning'">
-                    {{ item.is_enabled ? "Enabled" : "Disabled" }}
-                  </AppBadge>
-                </td>
-                <td>
-                  <div class="grid gap-1 text-xs">
-                    <RunStatusBadge :status="item.last_run_status || 'unknown'" />
-                    <span class="whitespace-nowrap text-secondary">{{ formatDate(item.last_run_dt, true) }}</span>
-                  </div>
-                </td>
-                <td>
-                  <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">
-                    Manage
-                  </AppButton>
-                </td>
-              </tr>
-            </tbody>
-          </AppTable>
-        </div>
+                  </td>
+                  <td>
+                    <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
+                  </td>
+                </tr>
+              </tbody>
+            </AppTable>
+          </div>
+        </AsyncStateGate>
       </AppCard>
     </section>
 
     <AppModal :open="activeScholarSettings !== null" title="Scholar settings" @close="closeScholarSettings">
       <div v-if="activeScholarSettings" class="grid gap-4">
         <div class="flex items-start gap-3">
-          <div
-            class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-200 bg-zinc-100 text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-          >
-            <img
-              v-if="canRenderImage('scholar', activeScholarSettings.id, activeScholarSettings.profile_image_url)"
-              :src="activeScholarSettings.profile_image_url || ''"
-              :alt="`${scholarLabel(activeScholarSettings)} profile image`"
-              class="h-full w-full object-cover"
-              loading="lazy"
-              referrerpolicy="no-referrer"
-              @error="markImageFailed('scholar', activeScholarSettings.id, activeScholarSettings.profile_image_url)"
-            />
-            <span v-else>{{ makeInitials(activeScholarSettings.display_name, activeScholarSettings.scholar_id) }}</span>
-          </div>
+          <ScholarAvatar
+            :label="activeScholarSettings.display_name"
+            :scholar-id="activeScholarSettings.scholar_id"
+            :image-url="activeScholarSettings.profile_image_url"
+          />
 
           <div class="min-w-0 space-y-1">
-            <p class="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <p class="truncate text-sm font-semibold text-ink-primary">
               {{ scholarLabel(activeScholarSettings) }}
             </p>
             <p class="text-xs text-secondary">
@@ -857,7 +764,7 @@ onMounted(() => {
         </div>
 
         <div class="grid gap-2">
-          <label class="text-sm font-medium text-zinc-700 dark:text-zinc-300" :for="`scholar-image-url-${activeScholarSettings.id}`">
+          <label class="text-sm font-medium text-ink-secondary" :for="`scholar-image-url-${activeScholarSettings.id}`">
             Profile image URL override
           </label>
           <div class="flex flex-wrap items-center gap-2">
@@ -880,7 +787,7 @@ onMounted(() => {
           <div class="flex flex-wrap items-center gap-2">
             <label
               :for="`scholar-image-upload-${activeScholarSettings.id}`"
-              class="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-200 focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-500 focus-within:ring-offset-2 focus-within:ring-offset-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-within:ring-brand-400 dark:focus-within:ring-offset-zinc-950"
+              class="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-lg border border-stroke-strong bg-action-secondary-bg px-3 py-2 text-sm font-semibold text-action-secondary-text transition hover:bg-action-secondary-hover-bg focus-within:outline-none focus-within:ring-2 focus-within:ring-focus-ring focus-within:ring-offset-2 focus-within:ring-offset-focus-offset"
               :class="{ 'pointer-events-none opacity-60': isImageBusy(activeScholarSettings.id) }"
             >
               {{ imageUploadingScholarId === activeScholarSettings.id ? "Uploading..." : "Upload image" }}
@@ -899,7 +806,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-stroke-default pt-3">
           <AppButton
             variant="secondary"
             :disabled="isImageBusy(activeScholarSettings.id) || saving"

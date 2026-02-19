@@ -3,14 +3,14 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import AppPage from "@/components/layout/AppPage.vue";
-import AppAlert from "@/components/ui/AppAlert.vue";
+import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
+import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
-import AppEmptyState from "@/components/ui/AppEmptyState.vue";
+import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppInput from "@/components/ui/AppInput.vue";
 import AppSelect from "@/components/ui/AppSelect.vue";
-import AppSkeleton from "@/components/ui/AppSkeleton.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import {
   listPublications,
@@ -23,12 +23,16 @@ import {
 import { listScholars, type ScholarProfile } from "@/features/scholars";
 import { ApiRequestError } from "@/lib/api/errors";
 
+type PublicationSortKey = "title" | "scholar" | "year" | "citations" | "status" | "first_seen";
+
 const loading = ref(true);
 const publishingAll = ref(false);
 const publishingSelected = ref(false);
 const mode = ref<PublicationMode>("new");
 const selectedScholarFilter = ref("");
 const searchQuery = ref("");
+const sortKey = ref<PublicationSortKey>("first_seen");
+const sortDirection = ref<"asc" | "desc">("desc");
 
 const scholars = ref<ScholarProfile[]>([]);
 const listState = ref<PublicationsResult | null>(null);
@@ -39,6 +43,7 @@ const errorRequestId = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const route = useRoute();
 const router = useRouter();
+const textCollator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 
 function normalizeScholarFilterQuery(value: unknown): string {
   if (Array.isArray(value)) {
@@ -90,6 +95,19 @@ function publicationKey(item: PublicationItem): string {
   return `${item.scholar_profile_id}:${item.publication_id}`;
 }
 
+function scholarLabel(item: ScholarProfile): string {
+  return item.display_name || item.scholar_id;
+}
+
+const selectedScholarName = computed(() => {
+  const selectedId = Number(selectedScholarFilter.value);
+  if (!Number.isInteger(selectedId) || selectedId <= 0) {
+    return "all scholars";
+  }
+  const profile = scholars.value.find((item) => item.id === selectedId);
+  return profile ? scholarLabel(profile) : "the selected scholar";
+});
+
 const filteredPublications = computed(() => {
   const base = listState.value?.publications ?? [];
   const normalized = searchQuery.value.trim().toLowerCase();
@@ -106,9 +124,56 @@ const filteredPublications = computed(() => {
   });
 });
 
+function publicationSortValue(item: PublicationItem, key: PublicationSortKey): number | string {
+  if (key === "title") {
+    return item.title;
+  }
+  if (key === "scholar") {
+    return item.scholar_label;
+  }
+  if (key === "year") {
+    return item.year ?? -1;
+  }
+  if (key === "citations") {
+    return item.citation_count;
+  }
+  if (key === "status") {
+    if (item.is_read) {
+      return 2;
+    }
+    if (item.is_new_in_latest_run) {
+      return 0;
+    }
+    return 1;
+  }
+  const timestamp = Date.parse(item.first_seen_at);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+const sortedPublications = computed(() => {
+  const sorted = [...filteredPublications.value];
+  sorted.sort((a, b) => {
+    const left = publicationSortValue(a, sortKey.value);
+    const right = publicationSortValue(b, sortKey.value);
+
+    let comparison: number;
+    if (typeof left === "string" && typeof right === "string") {
+      comparison = textCollator.compare(left, right);
+    } else {
+      comparison = Number(left) - Number(right);
+    }
+
+    if (comparison === 0) {
+      comparison = textCollator.compare(a.title, b.title);
+    }
+    return sortDirection.value === "asc" ? comparison : comparison * -1;
+  });
+  return sorted;
+});
+
 const visibleUnreadKeys = computed(() => {
   const keys = new Set<string>();
-  for (const item of filteredPublications.value) {
+  for (const item of sortedPublications.value) {
     if (!item.is_read) {
       keys.add(publicationKey(item));
     }
@@ -117,6 +182,25 @@ const visibleUnreadKeys = computed(() => {
 });
 
 const selectedCount = computed(() => selectedPublicationKeys.value.size);
+const visibleCount = computed(() => sortedPublications.value.length);
+const visibleUnreadCount = computed(() => visibleUnreadKeys.value.size);
+const actionBusy = computed(() => loading.value || publishingAll.value || publishingSelected.value);
+const showingEmptyList = computed(() => Boolean(listState.value) && sortedPublications.value.length === 0);
+const modeLabel = computed(() => (mode.value === "new" ? "Needs review" : "All records"));
+
+const emptyTitle = computed(() =>
+  searchQuery.value.trim().length > 0 ? "No publications match this search" : "No publications found",
+);
+
+const emptyBody = computed(() => {
+  if (searchQuery.value.trim().length > 0) {
+    return "Try another title, scholar, venue, or year.";
+  }
+  if (mode.value === "new") {
+    return `No publications currently need review for ${selectedScholarName.value}.`;
+  }
+  return `No publication records for ${selectedScholarName.value}.`;
+});
 
 const allVisibleUnreadSelected = computed(() => {
   if (visibleUnreadKeys.value.size === 0) {
@@ -130,7 +214,7 @@ const allVisibleUnreadSelected = computed(() => {
   return true;
 });
 
-watch(filteredPublications, (items) => {
+watch(sortedPublications, (items) => {
   const validKeys = new Set(items.filter((item) => !item.is_read).map((item) => publicationKey(item)));
   const next = new Set<string>();
   for (const key of selectedPublicationKeys.value) {
@@ -142,6 +226,22 @@ watch(filteredPublications, (items) => {
     selectedPublicationKeys.value = next;
   }
 });
+
+function toggleSort(nextKey: PublicationSortKey): void {
+  if (sortKey.value === nextKey) {
+    sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
+    return;
+  }
+  sortKey.value = nextKey;
+  sortDirection.value = nextKey === "first_seen" ? "desc" : "asc";
+}
+
+function sortMarker(key: PublicationSortKey): string {
+  if (sortKey.value !== key) {
+    return "↕";
+  }
+  return sortDirection.value === "asc" ? "↑" : "↓";
+}
 
 async function loadScholarFilters(): Promise<void> {
   try {
@@ -240,14 +340,14 @@ async function onMarkSelectedRead(): Promise<void> {
 
   try {
     const response = await markSelectedRead(selections);
-    successMessage.value = `${response.updated_count} publication${response.updated_count === 1 ? "" : "s"} marked as read.`;
+    successMessage.value = `${response.updated_count} publication${response.updated_count === 1 ? "" : "s"} marked as reviewed.`;
     await loadPublications();
   } catch (error) {
     if (error instanceof ApiRequestError) {
       errorMessage.value = error.message;
       errorRequestId.value = error.requestId;
     } else {
-      errorMessage.value = "Unable to mark selected publications as read.";
+      errorMessage.value = "Unable to mark selected publications as reviewed.";
     }
   } finally {
     publishingSelected.value = false;
@@ -262,18 +362,22 @@ async function onMarkAllRead(): Promise<void> {
 
   try {
     const response = await markAllRead();
-    successMessage.value = response.message;
+    successMessage.value = `${response.updated_count} publication${response.updated_count === 1 ? "" : "s"} marked as reviewed.`;
     await loadPublications();
   } catch (error) {
     if (error instanceof ApiRequestError) {
       errorMessage.value = error.message;
       errorRequestId.value = error.requestId;
     } else {
-      errorMessage.value = "Unable to mark publications as read.";
+      errorMessage.value = "Unable to mark publications as reviewed.";
     }
   } finally {
     publishingAll.value = false;
   }
+}
+
+function resetSearchQuery(): void {
+  searchQuery.value = "";
 }
 
 onMounted(() => {
@@ -294,17 +398,48 @@ watch(
 </script>
 
 <template>
-  <AppPage title="Publications" subtitle="Filter, search, and triage publication status quickly.">
-    <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
-      <div class="grid gap-3 md:grid-cols-[auto_auto_minmax(0,1fr)] md:items-end">
+  <AppPage
+    title="Publications"
+    subtitle="Filter and review discovered publications, then mark what you have handled so the next check stays focused."
+  >
+    <AppCard class="space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="space-y-1">
+          <div class="flex items-center gap-1">
+            <h2 class="text-lg font-semibold text-ink-primary">What you can do here</h2>
+            <AppHelpHint
+              text="Publications are discovered records from tracked scholar profiles. Review mode helps focus only on newly detected items."
+            />
+          </div>
+          <p class="text-sm text-secondary">
+            Select a scholar or time scope, search within results, and mark items reviewed when you are done.
+          </p>
+        </div>
+
+        <AppButton variant="ghost" :disabled="loading" @click="loadPublications">
+          {{ loading ? "Refreshing..." : "Refresh" }}
+        </AppButton>
+      </div>
+
+      <div class="grid gap-3 xl:grid-cols-[minmax(0,15rem)_minmax(0,18rem)_minmax(0,1fr)] xl:items-end">
         <div class="grid gap-1 text-xs text-secondary">
-          <span>Scope</span>
+          <span>View mode</span>
           <div class="flex min-h-10 flex-wrap items-center gap-2">
-            <AppButton :variant="mode === 'new' ? 'primary' : 'secondary'" @click="setMode('new')">
-              New
+            <AppButton
+              :variant="mode === 'new' ? 'primary' : 'secondary'"
+              class="min-w-16 justify-center"
+              :disabled="actionBusy"
+              @click="setMode('new')"
+            >
+              Needs review
             </AppButton>
-            <AppButton :variant="mode === 'all' ? 'primary' : 'secondary'" @click="setMode('all')">
-              All
+            <AppButton
+              :variant="mode === 'all' ? 'primary' : 'secondary'"
+              class="min-w-16 justify-center"
+              :disabled="actionBusy"
+              @click="setMode('all')"
+            >
+              All records
             </AppButton>
           </div>
         </div>
@@ -314,100 +449,140 @@ watch(
           <AppSelect
             id="publications-scholar-filter"
             v-model="selectedScholarFilter"
-            :disabled="loading || publishingAll || publishingSelected"
+            :disabled="actionBusy"
             @change="onScholarFilterChanged"
           >
             <option value="">All scholars</option>
             <option v-for="scholar in scholars" :key="scholar.id" :value="String(scholar.id)">
-              {{ scholar.display_name || scholar.scholar_id }}
+              {{ scholarLabel(scholar) }}
             </option>
           </AppSelect>
         </label>
 
         <label class="grid gap-1 text-xs text-secondary" for="publications-search-input">
-          <span>Search</span>
-          <AppInput
-            id="publications-search-input"
-            v-model="searchQuery"
-            placeholder="Search title, scholar, venue, year"
-            :disabled="loading"
-          />
+          <span>Search within current scope</span>
+          <div class="flex min-w-0 items-center gap-2">
+            <AppInput
+              id="publications-search-input"
+              v-model="searchQuery"
+              placeholder="Search title, scholar, venue, year"
+              :disabled="loading"
+            />
+            <AppButton
+              v-if="searchQuery.trim().length > 0"
+              variant="secondary"
+              class="shrink-0"
+              :disabled="loading"
+              @click="resetSearchQuery"
+            >
+              Clear
+            </AppButton>
+          </div>
         </label>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <AppButton
-          variant="secondary"
-          :disabled="selectedCount === 0 || loading || publishingSelected || publishingAll"
-          @click="onMarkSelectedRead"
-        >
-          {{ publishingSelected ? "Marking..." : `Mark selected read (${selectedCount})` }}
-        </AppButton>
-        <AppButton variant="secondary" :disabled="publishingAll || loading || publishingSelected" @click="onMarkAllRead">
-          {{ publishingAll ? "Marking..." : "Mark all unread as read" }}
-        </AppButton>
-        <AppButton variant="ghost" :disabled="loading" @click="loadPublications">
-          {{ loading ? "Refreshing..." : "Refresh" }}
-        </AppButton>
-      </div>
-    </div>
-
-    <AppAlert v-if="successMessage" tone="success" dismissible @dismiss="successMessage = null">
-      <template #title>Update complete</template>
-      <p>{{ successMessage }}</p>
-    </AppAlert>
-
-    <AppAlert v-if="errorMessage" tone="danger">
-      <template #title>Publication request failed</template>
-      <p>{{ errorMessage }}</p>
-      <p class="text-secondary">Request ID: {{ errorRequestId || "n/a" }}</p>
-    </AppAlert>
-
-    <AppSkeleton v-if="loading" :lines="8" />
-
-    <template v-else-if="listState">
-      <AppCard class="space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Publication list</h2>
-          <div class="flex flex-wrap items-center gap-2">
-            <AppBadge tone="info">Mode: {{ listState.mode }}</AppBadge>
-            <AppBadge tone="neutral">Visible: {{ filteredPublications.length }}</AppBadge>
-          </div>
+      <div class="flex flex-wrap items-center justify-between gap-2 border-t border-stroke-default pt-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <AppBadge tone="info">Mode: {{ modeLabel }}</AppBadge>
+          <AppBadge tone="neutral">Visible: {{ visibleCount }}</AppBadge>
+          <AppBadge tone="warning">Needs review: {{ visibleUnreadCount }}</AppBadge>
+          <AppBadge tone="success">Selected: {{ selectedCount }}</AppBadge>
         </div>
 
-        <AppEmptyState
-          v-if="filteredPublications.length === 0"
-          title="No publications found"
-          body="Try changing mode, scholar filter, or search terms."
-        />
+        <div class="flex flex-wrap items-center gap-2">
+          <AppButton
+            variant="secondary"
+            :disabled="selectedCount === 0 || actionBusy"
+            @click="onMarkSelectedRead"
+          >
+            {{ publishingSelected ? "Updating..." : `Mark selected reviewed (${selectedCount})` }}
+          </AppButton>
+          <AppButton variant="secondary" :disabled="actionBusy || visibleUnreadCount === 0" @click="onMarkAllRead">
+            {{ publishingAll ? "Updating..." : "Mark all as reviewed" }}
+          </AppButton>
+        </div>
+      </div>
+    </AppCard>
 
-        <AppTable v-else label="Publication list table">
+    <RequestStateAlerts
+      :success-message="successMessage"
+      success-title="Publication update complete"
+      :error-message="errorMessage"
+      :error-request-id="errorRequestId"
+      error-title="Publication request failed"
+      @dismiss-success="successMessage = null"
+    />
+
+    <AppCard class="space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-1">
+          <h2 class="text-lg font-semibold text-ink-primary">Publication List</h2>
+          <AppHelpHint
+            text="Use sorting, search, and bulk actions here to move discovered records from needs-review into reviewed history."
+          />
+        </div>
+        <span class="text-xs text-secondary">Currently showing {{ selectedScholarName }}</span>
+      </div>
+
+      <AsyncStateGate
+        :loading="loading"
+        :loading-lines="8"
+        :empty="showingEmptyList"
+        :empty-title="emptyTitle"
+        :empty-body="emptyBody"
+        :show-empty="!errorMessage"
+      >
+        <AppTable v-if="listState" label="Publication list table">
           <thead>
             <tr>
               <th scope="col" class="w-12">
                 <input
                   type="checkbox"
-                  class="h-4 w-4 rounded border-zinc-400 text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:focus-visible:ring-brand-400 dark:focus-visible:ring-offset-zinc-950"
+                  class="h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
                   :checked="allVisibleUnreadSelected"
                   :disabled="visibleUnreadKeys.size === 0"
-                  aria-label="Select all visible unread publications"
+                  aria-label="Select all visible publications that need review"
                   @change="onToggleAllVisible"
                 />
               </th>
-              <th scope="col">Title</th>
-              <th scope="col">Scholar</th>
-              <th scope="col">Year</th>
-              <th scope="col">Citations</th>
-              <th scope="col">Status</th>
-              <th scope="col">First seen</th>
+              <th scope="col">
+                <button type="button" class="table-sort" @click="toggleSort('title')">
+                  Title <span aria-hidden="true">{{ sortMarker("title") }}</span>
+                </button>
+              </th>
+              <th scope="col">
+                <button type="button" class="table-sort" @click="toggleSort('scholar')">
+                  Scholar <span aria-hidden="true">{{ sortMarker("scholar") }}</span>
+                </button>
+              </th>
+              <th scope="col">
+                <button type="button" class="table-sort" @click="toggleSort('year')">
+                  Year <span aria-hidden="true">{{ sortMarker("year") }}</span>
+                </button>
+              </th>
+              <th scope="col">
+                <button type="button" class="table-sort" @click="toggleSort('citations')">
+                  Citations <span aria-hidden="true">{{ sortMarker("citations") }}</span>
+                </button>
+              </th>
+              <th scope="col">
+                <button type="button" class="table-sort" @click="toggleSort('status')">
+                  Review status <span aria-hidden="true">{{ sortMarker("status") }}</span>
+                </button>
+              </th>
+              <th scope="col">
+                <button type="button" class="table-sort" @click="toggleSort('first_seen')">
+                  First seen <span aria-hidden="true">{{ sortMarker("first_seen") }}</span>
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in filteredPublications" :key="publicationKey(item)">
+            <tr v-for="item in sortedPublications" :key="publicationKey(item)">
               <td>
                 <input
                   type="checkbox"
-                  class="h-4 w-4 rounded border-zinc-400 text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:focus-visible:ring-brand-400 dark:focus-visible:ring-offset-zinc-950"
+                  class="h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
                   :checked="selectedPublicationKeys.has(publicationKey(item))"
                   :disabled="item.is_read"
                   :aria-label="`Select publication ${item.title}`"
@@ -432,10 +607,10 @@ watch(
               <td>
                 <div class="flex flex-wrap items-center gap-2">
                   <AppBadge :tone="item.is_new_in_latest_run ? 'info' : 'neutral'">
-                    {{ item.is_new_in_latest_run ? "New" : "Existing" }}
+                    {{ item.is_new_in_latest_run ? "New this check" : "Previously seen" }}
                   </AppBadge>
                   <AppBadge :tone="item.is_read ? 'success' : 'warning'">
-                    {{ item.is_read ? "Read" : "Unread" }}
+                    {{ item.is_read ? "Reviewed" : "Needs review" }}
                   </AppBadge>
                 </div>
               </td>
@@ -443,7 +618,13 @@ watch(
             </tr>
           </tbody>
         </AppTable>
-      </AppCard>
-    </template>
+      </AsyncStateGate>
+    </AppCard>
   </AppPage>
 </template>
+
+<style scoped>
+.table-sort {
+  @apply inline-flex items-center gap-1 text-left font-semibold text-ink-primary transition hover:text-ink-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset;
+}
+</style>

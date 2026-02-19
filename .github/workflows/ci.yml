@@ -90,6 +90,10 @@ jobs:
         working-directory: frontend
         run: npm install
 
+      - name: Frontend theme token policy
+        working-directory: frontend
+        run: npm run check:theme-tokens
+
       - name: Frontend typecheck
         working-directory: frontend
         run: npm run typecheck

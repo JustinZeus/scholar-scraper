@@ -14,7 +14,7 @@ EXPECTED_TABLES = {
 }
 
 EXPECTED_ENUMS = {"run_status", "run_trigger_type"}
-EXPECTED_REVISION = "20260217_0007"
+EXPECTED_REVISION = "20260219_0008"
 
 
 @pytest.mark.integration
@@ -182,3 +182,20 @@ async def test_scholar_profiles_has_initial_page_snapshot_columns(db_session: As
         "last_initial_page_fingerprint_sha256",
         "last_initial_page_checked_at",
     }
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.migrations
+@pytest.mark.asyncio
+async def test_user_settings_has_nav_visible_pages_column(db_session: AsyncSession) -> None:
+    result = await db_session.execute(
+        text(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'user_settings' AND column_name = 'nav_visible_pages'
+            """
+        )
+    )
+    assert result.scalar_one() == 1

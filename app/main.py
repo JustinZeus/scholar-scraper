@@ -13,7 +13,11 @@ from app.api.router import router as api_router
 from app.api.runtime_deps import get_ingestion_service, get_scholar_source
 from app.db.session import check_database
 from app.db.session import close_engine
-from app.http.middleware import RequestLoggingMiddleware, parse_skip_paths
+from app.http.middleware import (
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+    parse_skip_paths,
+)
 from app.logging_config import configure_logging, parse_redact_fields
 from app.security.csrf import CSRFMiddleware
 from app.services.scheduler import SchedulerService
@@ -62,6 +66,26 @@ app.add_middleware(
     RequestLoggingMiddleware,
     log_requests=settings.log_requests,
     skip_paths=parse_skip_paths(settings.log_request_skip_paths),
+)
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    enabled=settings.security_headers_enabled,
+    x_content_type_options=settings.security_x_content_type_options,
+    x_frame_options=settings.security_x_frame_options,
+    referrer_policy=settings.security_referrer_policy,
+    permissions_policy=settings.security_permissions_policy,
+    cross_origin_opener_policy=settings.security_cross_origin_opener_policy,
+    cross_origin_resource_policy=settings.security_cross_origin_resource_policy,
+    content_security_policy_enabled=settings.security_csp_enabled,
+    content_security_policy=settings.security_csp_policy,
+    content_security_policy_docs=settings.security_csp_docs_policy,
+    content_security_policy_report_only=settings.security_csp_report_only,
+    strict_transport_security_enabled=settings.security_strict_transport_security_enabled,
+    strict_transport_security_max_age=settings.security_strict_transport_security_max_age,
+    strict_transport_security_include_subdomains=(
+        settings.security_strict_transport_security_include_subdomains
+    ),
+    strict_transport_security_preload=settings.security_strict_transport_security_preload,
 )
 app.include_router(api_router)
 

@@ -1,16 +1,31 @@
 <script setup lang="ts">
-defineProps<{
-  title: string;
-  subtitle?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    title: string;
+    subtitle?: string;
+    fill?: boolean;
+  }>(),
+  {
+    fill: false,
+  },
+);
 </script>
 
 <template>
-  <section class="page-stack min-w-0">
+  <section
+    :class="
+      props.fill
+        ? 'min-w-0 flex min-h-0 flex-col gap-6 lg:h-full'
+        : 'page-stack min-w-0'
+    "
+  >
     <header class="space-y-2">
-      <h1 class="page-title">{{ title }}</h1>
-      <p v-if="subtitle" class="page-subtitle">{{ subtitle }}</p>
+      <h1 class="page-title">{{ props.title }}</h1>
+      <p v-if="props.subtitle" class="page-subtitle">{{ props.subtitle }}</p>
     </header>
-    <slot />
+    <div v-if="props.fill" class="min-h-0 flex-1">
+      <slot />
+    </div>
+    <slot v-else />
   </section>
 </template>

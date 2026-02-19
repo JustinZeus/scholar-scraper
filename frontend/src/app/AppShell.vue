@@ -12,23 +12,27 @@ const showChrome = computed(() => auth.isAuthenticated);
 </script>
 
 <template>
-  <div class="min-h-screen overflow-x-clip">
+  <div class="h-[100dvh] max-h-[100dvh] w-full max-w-full overflow-hidden">
     <a href="#app-main" class="skip-link">Skip to main content</a>
     <RequestErrorPanel />
 
     <template v-if="showChrome">
       <AppHeader />
       <div
-        class="grid min-h-[calc(100dvh-4.5rem)] grid-cols-1 lg:h-[calc(100dvh-4.5rem)] lg:min-h-[calc(100dvh-4.5rem)] lg:grid-cols-[17rem_minmax(0,1fr)]"
+        class="grid h-[calc(100dvh-4.5rem)] min-h-0 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-1"
       >
-        <AppNav class="lg:min-h-0 lg:overflow-y-auto" />
-        <main id="app-main" class="min-w-0 px-4 py-6 sm:px-6 lg:min-h-0 lg:overflow-y-auto lg:px-8">
+        <AppNav class="min-h-0 overflow-x-hidden lg:overflow-y-auto" />
+        <main id="app-main" class="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden px-4 py-6 sm:px-6 lg:px-8">
           <RouterView />
         </main>
       </div>
     </template>
 
-    <main id="app-main" v-else class="min-h-screen overflow-x-clip">
+    <main
+      id="app-main"
+      v-else
+      class="h-[100dvh] max-h-[100dvh] min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+    >
       <RouterView />
     </main>
   </div>

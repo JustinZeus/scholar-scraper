@@ -433,6 +433,7 @@ class SettingsData(BaseModel):
     auto_run_enabled: bool
     run_interval_minutes: int
     request_delay_seconds: int
+    nav_visible_pages: list[str]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -448,6 +449,7 @@ class SettingsUpdateRequest(BaseModel):
     auto_run_enabled: bool
     run_interval_minutes: int
     request_delay_seconds: int
+    nav_visible_pages: list[str] | None = None
 
     model_config = ConfigDict(extra="forbid")
 

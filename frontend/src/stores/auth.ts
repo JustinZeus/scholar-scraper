@@ -4,6 +4,7 @@ import { ApiRequestError } from "@/lib/api/errors";
 import { fetchCsrfBootstrap } from "@/lib/api/csrf";
 import { fetchMe, loginSession, logoutSession, type SessionUser } from "@/lib/auth/session";
 import { useUiStore } from "@/stores/ui";
+import { useUserSettingsStore } from "@/stores/user_settings";
 
 export type AuthState = "unknown" | "authenticated" | "anonymous";
 
@@ -53,12 +54,16 @@ export const useAuthStore = defineStore("auth", {
       this.state = "authenticated";
       this.user = response.data.user;
       this.csrfToken = response.data.csrf_token;
+      const userSettings = useUserSettingsStore();
+      await userSettings.bootstrap();
     },
     async logout(): Promise<void> {
       await logoutSession();
       this.state = "anonymous";
       this.user = null;
       this.csrfToken = null;
+      const userSettings = useUserSettingsStore();
+      userSettings.reset();
 
       try {
         const csrf = await fetchCsrfBootstrap();

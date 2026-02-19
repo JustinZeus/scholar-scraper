@@ -2,13 +2,14 @@
 import { computed, onMounted, ref } from "vue";
 
 import AppPage from "@/components/layout/AppPage.vue";
+import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
 import QueueHealthBadge from "@/components/patterns/QueueHealthBadge.vue";
+import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import RunStatusBadge from "@/components/patterns/RunStatusBadge.vue";
-import AppAlert from "@/components/ui/AppAlert.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
-import AppSkeleton from "@/components/ui/AppSkeleton.vue";
+import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import {
   clearQueueItem,
@@ -136,7 +137,23 @@ onMounted(() => {
 
 <template>
   <AppPage title="Runs" subtitle="Manual run controls and continuation queue diagnostics.">
-    <div class="flex flex-wrap items-center justify-between gap-3">
+    <AppCard class="space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="space-y-1">
+          <div class="flex items-center gap-1">
+            <h2 class="text-lg font-semibold text-ink-primary">Run controls</h2>
+            <AppHelpHint
+              text="A run is one full publication-check cycle across eligible tracked scholar profiles."
+            />
+          </div>
+          <p class="text-sm text-secondary">Trigger runs and monitor continuation-queue pressure.</p>
+        </div>
+        <QueueHealthBadge
+          :queued="queueCounts.queued"
+          :retrying="queueCounts.retrying"
+          :dropped="queueCounts.dropped"
+        />
+      </div>
       <div class="flex flex-wrap items-center gap-2">
         <AppButton :disabled="pendingRun" @click="onTriggerManualRun">
           {{ pendingRun ? "Triggering..." : "Run now" }}
@@ -145,30 +162,22 @@ onMounted(() => {
           {{ loading ? "Refreshing..." : "Refresh" }}
         </AppButton>
       </div>
+    </AppCard>
 
-      <QueueHealthBadge
-        :queued="queueCounts.queued"
-        :retrying="queueCounts.retrying"
-        :dropped="queueCounts.dropped"
-      />
-    </div>
+    <RequestStateAlerts
+      :success-message="successMessage"
+      :error-message="errorMessage"
+      :error-request-id="errorRequestId"
+      error-title="Run diagnostics request failed"
+      @dismiss-success="successMessage = null"
+    />
 
-    <AppAlert v-if="successMessage" tone="success" dismissible @dismiss="successMessage = null">
-      <template #title>Operation complete</template>
-      <p>{{ successMessage }}</p>
-    </AppAlert>
-
-    <AppAlert v-if="errorMessage" tone="danger">
-      <template #title>Run diagnostics request failed</template>
-      <p>{{ errorMessage }}</p>
-      <p class="text-secondary">Request ID: {{ errorRequestId || "n/a" }}</p>
-    </AppAlert>
-
-    <AppSkeleton v-if="loading" :lines="8" />
-
-    <template v-else>
+    <AsyncStateGate :loading="loading" :loading-lines="8" :show-empty="false">
       <AppCard class="space-y-4">
-        <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Recent Runs</h2>
+        <div class="flex items-center gap-1">
+          <h2 class="text-lg font-semibold text-ink-primary">Recent Runs</h2>
+          <AppHelpHint text="Recent run history with volume and failure indicators per cycle." />
+        </div>
         <AppEmptyState
           v-if="runs.length === 0"
           title="No runs found"
@@ -207,7 +216,12 @@ onMounted(() => {
       </AppCard>
 
       <AppCard class="space-y-4">
-        <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Continuation Queue</h2>
+        <div class="flex items-center gap-1">
+          <h2 class="text-lg font-semibold text-ink-primary">Continuation Queue</h2>
+          <AppHelpHint
+            text="Retry queue for interrupted profile checks. Use actions to retry, drop, or clear items."
+          />
+        </div>
         <AppEmptyState
           v-if="queueItems.length === 0"
           title="Queue is empty"
@@ -261,6 +275,6 @@ onMounted(() => {
           </tbody>
         </AppTable>
       </AppCard>
-    </template>
+    </AsyncStateGate>
   </AppPage>
 </template>

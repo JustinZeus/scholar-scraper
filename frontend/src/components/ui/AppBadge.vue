@@ -7,22 +7,22 @@ const props = defineProps<{
 
 const toneClass = computed(() => {
   if (props.tone === "success") {
-    return "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300";
+    return "border-state-success-border bg-state-success-bg text-state-success-text";
   }
 
   if (props.tone === "warning") {
-    return "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300";
+    return "border-state-warning-border bg-state-warning-bg text-state-warning-text";
   }
 
   if (props.tone === "danger") {
-    return "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/50 dark:text-rose-300";
+    return "border-state-danger-border bg-state-danger-bg text-state-danger-text";
   }
 
   if (props.tone === "info") {
-    return "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-800 dark:bg-brand-950/50 dark:text-brand-300";
+    return "border-state-info-border bg-state-info-bg text-state-info-text";
   }
 
-  return "border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+  return "border-stroke-default bg-surface-card-muted text-ink-secondary";
 });
 </script>
 

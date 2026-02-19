@@ -1,0 +1,313 @@
+{
+  "id": "tide",
+  "label": "Tide",
+  "description": "Ocean-inspired palette with teal emphasis.",
+  "modes": {
+    "light": {
+      "scale": {
+        "brand": {
+          "50": "#f0fdfa",
+          "100": "#ccfbf1",
+          "200": "#99f6e4",
+          "300": "#5eead4",
+          "400": "#2dd4bf",
+          "500": "#14b8a6",
+          "600": "#0d9488",
+          "700": "#0f766e",
+          "800": "#115e59",
+          "900": "#134e4a",
+          "950": "#042f2e"
+        },
+        "info": {
+          "50": "#f0f9ff",
+          "100": "#e0f2fe",
+          "200": "#bae6fd",
+          "300": "#7dd3fc",
+          "400": "#38bdf8",
+          "500": "#0ea5e9",
+          "600": "#0284c7",
+          "700": "#0369a1",
+          "800": "#075985",
+          "900": "#0c4a6e",
+          "950": "#082f49"
+        },
+        "success": {
+          "50": "#ecfdf5",
+          "100": "#d1fae5",
+          "200": "#a7f3d0",
+          "300": "#6ee7b7",
+          "400": "#34d399",
+          "500": "#10b981",
+          "600": "#059669",
+          "700": "#047857",
+          "800": "#065f46",
+          "900": "#064e3b",
+          "950": "#022c22"
+        },
+        "warning": {
+          "50": "#fffbeb",
+          "100": "#fef3c7",
+          "200": "#fde68a",
+          "300": "#fcd34d",
+          "400": "#fbbf24",
+          "500": "#f59e0b",
+          "600": "#d97706",
+          "700": "#b45309",
+          "800": "#92400e",
+          "900": "#78350f",
+          "950": "#451a03"
+        },
+        "danger": {
+          "50": "#fff1f2",
+          "100": "#ffe4e6",
+          "200": "#fecdd3",
+          "300": "#fda4af",
+          "400": "#fb7185",
+          "500": "#f43f5e",
+          "600": "#e11d48",
+          "700": "#be123c",
+          "800": "#9f1239",
+          "900": "#881337",
+          "950": "#4c0519"
+        }
+      },
+      "surface": {
+        "app": "#f0fdfa",
+        "nav": "#ffffff",
+        "nav_active": "#0f766e",
+        "card": "#ffffff",
+        "card_muted": "#ccfbf1",
+        "table": "#ffffff",
+        "table_header": "#f0fdfa",
+        "input": "#ffffff",
+        "overlay": "#0f172a"
+      },
+      "text": {
+        "primary": "#134e4a",
+        "secondary": "#0f766e",
+        "muted": "#115e59",
+        "inverse": "#f8fafc",
+        "link": "#0d9488"
+      },
+      "border": {
+        "default": "#99f6e4",
+        "strong": "#5eead4",
+        "subtle": "#ccfbf1",
+        "interactive": "#2dd4bf"
+      },
+      "focus": {
+        "ring": "#14b8a6",
+        "ring_offset": "#f0fdfa"
+      },
+      "action": {
+        "primary": {
+          "bg": "#0d9488",
+          "border": "#0d9488",
+          "text": "#f8fafc",
+          "hover_bg": "#0f766e",
+          "hover_border": "#0f766e",
+          "hover_text": "#ffffff"
+        },
+        "secondary": {
+          "bg": "#ecfeff",
+          "border": "#99f6e4",
+          "text": "#115e59",
+          "hover_bg": "#ccfbf1",
+          "hover_border": "#5eead4",
+          "hover_text": "#134e4a"
+        },
+        "ghost": {
+          "bg": "#f0fdfa",
+          "border": "#99f6e4",
+          "text": "#0f766e",
+          "hover_bg": "#ccfbf1",
+          "hover_border": "#5eead4",
+          "hover_text": "#115e59"
+        },
+        "danger": {
+          "bg": "#ffe4e6",
+          "border": "#fecdd3",
+          "text": "#be123c",
+          "hover_bg": "#fecdd3",
+          "hover_border": "#fda4af",
+          "hover_text": "#9f1239"
+        }
+      },
+      "state": {
+        "info": {
+          "bg": "#f0f9ff",
+          "border": "#bae6fd",
+          "text": "#075985"
+        },
+        "success": {
+          "bg": "#ecfdf5",
+          "border": "#a7f3d0",
+          "text": "#047857"
+        },
+        "warning": {
+          "bg": "#fffbeb",
+          "border": "#fde68a",
+          "text": "#92400e"
+        },
+        "danger": {
+          "bg": "#fff1f2",
+          "border": "#fecdd3",
+          "text": "#be123c"
+        }
+      }
+    },
+    "dark": {
+      "scale": {
+        "brand": {
+          "50": "#f0fdfa",
+          "100": "#ccfbf1",
+          "200": "#99f6e4",
+          "300": "#5eead4",
+          "400": "#2dd4bf",
+          "500": "#14b8a6",
+          "600": "#0d9488",
+          "700": "#0f766e",
+          "800": "#115e59",
+          "900": "#134e4a",
+          "950": "#042f2e"
+        },
+        "info": {
+          "50": "#f0f9ff",
+          "100": "#e0f2fe",
+          "200": "#bae6fd",
+          "300": "#7dd3fc",
+          "400": "#38bdf8",
+          "500": "#0ea5e9",
+          "600": "#0284c7",
+          "700": "#0369a1",
+          "800": "#075985",
+          "900": "#0c4a6e",
+          "950": "#082f49"
+        },
+        "success": {
+          "50": "#ecfdf5",
+          "100": "#d1fae5",
+          "200": "#a7f3d0",
+          "300": "#6ee7b7",
+          "400": "#34d399",
+          "500": "#10b981",
+          "600": "#059669",
+          "700": "#047857",
+          "800": "#065f46",
+          "900": "#064e3b",
+          "950": "#022c22"
+        },
+        "warning": {
+          "50": "#fffbeb",
+          "100": "#fef3c7",
+          "200": "#fde68a",
+          "300": "#fcd34d",
+          "400": "#fbbf24",
+          "500": "#f59e0b",
+          "600": "#d97706",
+          "700": "#b45309",
+          "800": "#92400e",
+          "900": "#78350f",
+          "950": "#451a03"
+        },
+        "danger": {
+          "50": "#fff1f2",
+          "100": "#ffe4e6",
+          "200": "#fecdd3",
+          "300": "#fda4af",
+          "400": "#fb7185",
+          "500": "#f43f5e",
+          "600": "#e11d48",
+          "700": "#be123c",
+          "800": "#9f1239",
+          "900": "#881337",
+          "950": "#4c0519"
+        }
+      },
+      "surface": {
+        "app": "#041f1f",
+        "nav": "#042f2e",
+        "nav_active": "#5eead4",
+        "card": "#042f2e",
+        "card_muted": "#134e4a",
+        "table": "#042f2e",
+        "table_header": "#134e4a",
+        "input": "#063a38",
+        "overlay": "#020617"
+      },
+      "text": {
+        "primary": "#e6fffb",
+        "secondary": "#c9fff3",
+        "muted": "#99f6e4",
+        "inverse": "#041f1f",
+        "link": "#5eead4"
+      },
+      "border": {
+        "default": "#115e59",
+        "strong": "#0f766e",
+        "subtle": "#134e4a",
+        "interactive": "#2dd4bf"
+      },
+      "focus": {
+        "ring": "#2dd4bf",
+        "ring_offset": "#041f1f"
+      },
+      "action": {
+        "primary": {
+          "bg": "#2dd4bf",
+          "border": "#2dd4bf",
+          "text": "#042f2e",
+          "hover_bg": "#5eead4",
+          "hover_border": "#5eead4",
+          "hover_text": "#042f2e"
+        },
+        "secondary": {
+          "bg": "#0f766e",
+          "border": "#14b8a6",
+          "text": "#e6fffb",
+          "hover_bg": "#0d9488",
+          "hover_border": "#2dd4bf",
+          "hover_text": "#ffffff"
+        },
+        "ghost": {
+          "bg": "#042f2e",
+          "border": "#0f766e",
+          "text": "#c9fff3",
+          "hover_bg": "#115e59",
+          "hover_border": "#14b8a6",
+          "hover_text": "#ffffff"
+        },
+        "danger": {
+          "bg": "#4c0519",
+          "border": "#881337",
+          "text": "#fecdd3",
+          "hover_bg": "#9f1239",
+          "hover_border": "#be123c",
+          "hover_text": "#fff1f2"
+        }
+      },
+      "state": {
+        "info": {
+          "bg": "#082f49",
+          "border": "#0369a1",
+          "text": "#bae6fd"
+        },
+        "success": {
+          "bg": "#022c22",
+          "border": "#047857",
+          "text": "#a7f3d0"
+        },
+        "warning": {
+          "bg": "#451a03",
+          "border": "#b45309",
+          "text": "#fde68a"
+        },
+        "danger": {
+          "bg": "#4c0519",
+          "border": "#be123c",
+          "text": "#fecdd3"
+        }
+      }
+    }
+  }
+}

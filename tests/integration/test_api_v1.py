@@ -593,6 +593,7 @@ async def test_api_settings_get_and_update(db_session: AsyncSession) -> None:
     get_response = client.get("/api/v1/settings")
     assert get_response.status_code == 200
     assert "request_delay_seconds" in get_response.json()["data"]
+    assert "nav_visible_pages" in get_response.json()["data"]
 
     update_response = client.put(
         "/api/v1/settings",
@@ -600,6 +601,7 @@ async def test_api_settings_get_and_update(db_session: AsyncSession) -> None:
             "auto_run_enabled": True,
             "run_interval_minutes": 45,
             "request_delay_seconds": 6,
+            "nav_visible_pages": ["dashboard", "scholars", "publications", "settings", "runs"],
         },
         headers=headers,
     )
@@ -608,6 +610,13 @@ async def test_api_settings_get_and_update(db_session: AsyncSession) -> None:
     assert updated["auto_run_enabled"] is True
     assert updated["run_interval_minutes"] == 45
     assert updated["request_delay_seconds"] == 6
+    assert updated["nav_visible_pages"] == [
+        "dashboard",
+        "scholars",
+        "publications",
+        "settings",
+        "runs",
+    ]
 
 
 @pytest.mark.integration

@@ -1,0 +1,313 @@
+{
+  "id": "graphite",
+  "label": "Graphite",
+  "description": "Neutral slate base with crisp indigo accents.",
+  "modes": {
+    "light": {
+      "scale": {
+        "brand": {
+          "50": "#f8fafc",
+          "100": "#f1f5f9",
+          "200": "#e2e8f0",
+          "300": "#cbd5e1",
+          "400": "#94a3b8",
+          "500": "#64748b",
+          "600": "#475569",
+          "700": "#334155",
+          "800": "#1e293b",
+          "900": "#0f172a",
+          "950": "#020617"
+        },
+        "info": {
+          "50": "#eef2ff",
+          "100": "#e0e7ff",
+          "200": "#c7d2fe",
+          "300": "#a5b4fc",
+          "400": "#818cf8",
+          "500": "#6366f1",
+          "600": "#4f46e5",
+          "700": "#4338ca",
+          "800": "#3730a3",
+          "900": "#312e81",
+          "950": "#1e1b4b"
+        },
+        "success": {
+          "50": "#ecfdf5",
+          "100": "#d1fae5",
+          "200": "#a7f3d0",
+          "300": "#6ee7b7",
+          "400": "#34d399",
+          "500": "#10b981",
+          "600": "#059669",
+          "700": "#047857",
+          "800": "#065f46",
+          "900": "#064e3b",
+          "950": "#022c22"
+        },
+        "warning": {
+          "50": "#fffbeb",
+          "100": "#fef3c7",
+          "200": "#fde68a",
+          "300": "#fcd34d",
+          "400": "#fbbf24",
+          "500": "#f59e0b",
+          "600": "#d97706",
+          "700": "#b45309",
+          "800": "#92400e",
+          "900": "#78350f",
+          "950": "#451a03"
+        },
+        "danger": {
+          "50": "#fff1f2",
+          "100": "#ffe4e6",
+          "200": "#fecdd3",
+          "300": "#fda4af",
+          "400": "#fb7185",
+          "500": "#f43f5e",
+          "600": "#e11d48",
+          "700": "#be123c",
+          "800": "#9f1239",
+          "900": "#881337",
+          "950": "#4c0519"
+        }
+      },
+      "surface": {
+        "app": "#f5f7fb",
+        "nav": "#ffffff",
+        "nav_active": "#334155",
+        "card": "#ffffff",
+        "card_muted": "#f1f5f9",
+        "table": "#ffffff",
+        "table_header": "#f8fafc",
+        "input": "#ffffff",
+        "overlay": "#0f172a"
+      },
+      "text": {
+        "primary": "#111827",
+        "secondary": "#374151",
+        "muted": "#6b7280",
+        "inverse": "#f9fafb",
+        "link": "#334155"
+      },
+      "border": {
+        "default": "#dbe2ea",
+        "strong": "#cbd5e1",
+        "subtle": "#eef2f7",
+        "interactive": "#94a3b8"
+      },
+      "focus": {
+        "ring": "#6366f1",
+        "ring_offset": "#f5f7fb"
+      },
+      "action": {
+        "primary": {
+          "bg": "#334155",
+          "border": "#334155",
+          "text": "#f9fafb",
+          "hover_bg": "#1e293b",
+          "hover_border": "#1e293b",
+          "hover_text": "#ffffff"
+        },
+        "secondary": {
+          "bg": "#f3f4f6",
+          "border": "#d1d5db",
+          "text": "#1f2937",
+          "hover_bg": "#e5e7eb",
+          "hover_border": "#cbd5e1",
+          "hover_text": "#111827"
+        },
+        "ghost": {
+          "bg": "#f8fafc",
+          "border": "#cbd5e1",
+          "text": "#334155",
+          "hover_bg": "#f1f5f9",
+          "hover_border": "#94a3b8",
+          "hover_text": "#1f2937"
+        },
+        "danger": {
+          "bg": "#ffe4e6",
+          "border": "#fecdd3",
+          "text": "#be123c",
+          "hover_bg": "#fecdd3",
+          "hover_border": "#fda4af",
+          "hover_text": "#9f1239"
+        }
+      },
+      "state": {
+        "info": {
+          "bg": "#eef2ff",
+          "border": "#c7d2fe",
+          "text": "#3730a3"
+        },
+        "success": {
+          "bg": "#ecfdf5",
+          "border": "#a7f3d0",
+          "text": "#047857"
+        },
+        "warning": {
+          "bg": "#fffbeb",
+          "border": "#fde68a",
+          "text": "#92400e"
+        },
+        "danger": {
+          "bg": "#fff1f2",
+          "border": "#fecdd3",
+          "text": "#be123c"
+        }
+      }
+    },
+    "dark": {
+      "scale": {
+        "brand": {
+          "50": "#f8fafc",
+          "100": "#f1f5f9",
+          "200": "#e2e8f0",
+          "300": "#cbd5e1",
+          "400": "#94a3b8",
+          "500": "#64748b",
+          "600": "#475569",
+          "700": "#334155",
+          "800": "#1e293b",
+          "900": "#0f172a",
+          "950": "#020617"
+        },
+        "info": {
+          "50": "#eef2ff",
+          "100": "#e0e7ff",
+          "200": "#c7d2fe",
+          "300": "#a5b4fc",
+          "400": "#818cf8",
+          "500": "#6366f1",
+          "600": "#4f46e5",
+          "700": "#4338ca",
+          "800": "#3730a3",
+          "900": "#312e81",
+          "950": "#1e1b4b"
+        },
+        "success": {
+          "50": "#ecfdf5",
+          "100": "#d1fae5",
+          "200": "#a7f3d0",
+          "300": "#6ee7b7",
+          "400": "#34d399",
+          "500": "#10b981",
+          "600": "#059669",
+          "700": "#047857",
+          "800": "#065f46",
+          "900": "#064e3b",
+          "950": "#022c22"
+        },
+        "warning": {
+          "50": "#fffbeb",
+          "100": "#fef3c7",
+          "200": "#fde68a",
+          "300": "#fcd34d",
+          "400": "#fbbf24",
+          "500": "#f59e0b",
+          "600": "#d97706",
+          "700": "#b45309",
+          "800": "#92400e",
+          "900": "#78350f",
+          "950": "#451a03"
+        },
+        "danger": {
+          "50": "#fff1f2",
+          "100": "#ffe4e6",
+          "200": "#fecdd3",
+          "300": "#fda4af",
+          "400": "#fb7185",
+          "500": "#f43f5e",
+          "600": "#e11d48",
+          "700": "#be123c",
+          "800": "#9f1239",
+          "900": "#881337",
+          "950": "#4c0519"
+        }
+      },
+      "surface": {
+        "app": "#0b1120",
+        "nav": "#111827",
+        "nav_active": "#64748b",
+        "card": "#111827",
+        "card_muted": "#1f2937",
+        "table": "#111827",
+        "table_header": "#1f2937",
+        "input": "#0f172a",
+        "overlay": "#020617"
+      },
+      "text": {
+        "primary": "#e5e7eb",
+        "secondary": "#cbd5e1",
+        "muted": "#94a3b8",
+        "inverse": "#0b1120",
+        "link": "#a5b4fc"
+      },
+      "border": {
+        "default": "#334155",
+        "strong": "#475569",
+        "subtle": "#1f2937",
+        "interactive": "#64748b"
+      },
+      "focus": {
+        "ring": "#818cf8",
+        "ring_offset": "#0b1120"
+      },
+      "action": {
+        "primary": {
+          "bg": "#64748b",
+          "border": "#64748b",
+          "text": "#020617",
+          "hover_bg": "#94a3b8",
+          "hover_border": "#94a3b8",
+          "hover_text": "#020617"
+        },
+        "secondary": {
+          "bg": "#1f2937",
+          "border": "#475569",
+          "text": "#e5e7eb",
+          "hover_bg": "#334155",
+          "hover_border": "#64748b",
+          "hover_text": "#f8fafc"
+        },
+        "ghost": {
+          "bg": "#0f172a",
+          "border": "#334155",
+          "text": "#cbd5e1",
+          "hover_bg": "#1f2937",
+          "hover_border": "#475569",
+          "hover_text": "#f8fafc"
+        },
+        "danger": {
+          "bg": "#4c0519",
+          "border": "#881337",
+          "text": "#fecdd3",
+          "hover_bg": "#9f1239",
+          "hover_border": "#be123c",
+          "hover_text": "#fff1f2"
+        }
+      },
+      "state": {
+        "info": {
+          "bg": "#1e1b4b",
+          "border": "#4338ca",
+          "text": "#c7d2fe"
+        },
+        "success": {
+          "bg": "#022c22",
+          "border": "#047857",
+          "text": "#a7f3d0"
+        },
+        "warning": {
+          "bg": "#451a03",
+          "border": "#b45309",
+          "text": "#fde68a"
+        },
+        "danger": {
+          "bg": "#4c0519",
+          "border": "#be123c",
+          "text": "#fecdd3"
+        }
+      }
+    }
+  }
+}

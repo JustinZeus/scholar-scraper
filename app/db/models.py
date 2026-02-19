@@ -98,6 +98,13 @@ class UserSetting(Base):
     request_delay_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("10")
     )
+    nav_visible_pages: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text(
+            '\'["dashboard","scholars","publications","settings","style-guide","runs","users"]\'::jsonb'
+        ),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

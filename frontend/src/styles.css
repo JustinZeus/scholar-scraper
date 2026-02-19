@@ -1,18 +1,143 @@
-@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --color-brand-50: 243 246 251;
+    --color-brand-100: 231 237 247;
+    --color-brand-200: 206 220 238;
+    --color-brand-300: 175 198 223;
+    --color-brand-400: 142 170 200;
+    --color-brand-500: 111 143 172;
+    --color-brand-600: 90 116 144;
+    --color-brand-700: 73 95 119;
+    --color-brand-800: 63 80 99;
+    --color-brand-900: 55 69 84;
+    --color-brand-950: 36 45 56;
+
+    --color-info-50: 240 249 255;
+    --color-info-100: 224 242 254;
+    --color-info-200: 186 230 253;
+    --color-info-300: 125 211 252;
+    --color-info-400: 56 189 248;
+    --color-info-500: 14 165 233;
+    --color-info-600: 2 132 199;
+    --color-info-700: 3 105 161;
+    --color-info-800: 7 89 133;
+    --color-info-900: 12 74 110;
+    --color-info-950: 8 47 73;
+
+    --color-success-50: 236 253 245;
+    --color-success-100: 209 250 229;
+    --color-success-200: 167 243 208;
+    --color-success-300: 110 231 183;
+    --color-success-400: 52 211 153;
+    --color-success-500: 16 185 129;
+    --color-success-600: 5 150 105;
+    --color-success-700: 4 120 87;
+    --color-success-800: 6 95 70;
+    --color-success-900: 6 78 59;
+    --color-success-950: 2 44 34;
+
+    --color-warning-50: 255 251 235;
+    --color-warning-100: 254 243 199;
+    --color-warning-200: 253 230 138;
+    --color-warning-300: 252 211 77;
+    --color-warning-400: 251 191 36;
+    --color-warning-500: 245 158 11;
+    --color-warning-600: 217 119 6;
+    --color-warning-700: 180 83 9;
+    --color-warning-800: 146 64 14;
+    --color-warning-900: 120 53 15;
+    --color-warning-950: 69 26 3;
+
+    --color-danger-50: 255 241 242;
+    --color-danger-100: 255 228 230;
+    --color-danger-200: 254 205 211;
+    --color-danger-300: 253 164 175;
+    --color-danger-400: 251 113 133;
+    --color-danger-500: 244 63 94;
+    --color-danger-600: 225 29 72;
+    --color-danger-700: 190 18 60;
+    --color-danger-800: 159 18 57;
+    --color-danger-900: 136 19 55;
+    --color-danger-950: 76 5 25;
+
+    --theme-surface-app: 243 246 251;
+    --theme-surface-nav: 255 255 255;
+    --theme-surface-nav-active: 73 95 119;
+    --theme-surface-card: 255 255 255;
+    --theme-surface-card-muted: 231 237 247;
+    --theme-surface-table: 255 255 255;
+    --theme-surface-table-header: 243 246 251;
+    --theme-surface-input: 255 255 255;
+    --theme-surface-overlay: 15 23 42;
+
+    --theme-text-primary: 31 41 55;
+    --theme-text-secondary: 71 85 105;
+    --theme-text-muted: 100 116 139;
+    --theme-text-inverse: 248 250 252;
+    --theme-text-link: 73 95 119;
+
+    --theme-border-default: 206 220 238;
+    --theme-border-strong: 175 198 223;
+    --theme-border-subtle: 231 237 247;
+    --theme-border-interactive: 142 170 200;
+
+    --theme-focus-ring: 111 143 172;
+    --theme-focus-ring-offset: 243 246 251;
+
+    --theme-action-primary-bg: 90 116 144;
+    --theme-action-primary-border: 90 116 144;
+    --theme-action-primary-text: 248 250 252;
+    --theme-action-primary-hover-bg: 73 95 119;
+    --theme-action-primary-hover-border: 73 95 119;
+    --theme-action-primary-hover-text: 255 255 255;
+
+    --theme-action-secondary-bg: 238 242 247;
+    --theme-action-secondary-border: 206 220 238;
+    --theme-action-secondary-text: 51 65 85;
+    --theme-action-secondary-hover-bg: 226 232 240;
+    --theme-action-secondary-hover-border: 175 198 223;
+    --theme-action-secondary-hover-text: 31 41 55;
+
+    --theme-action-ghost-bg: 243 246 251;
+    --theme-action-ghost-border: 206 220 238;
+    --theme-action-ghost-text: 73 95 119;
+    --theme-action-ghost-hover-bg: 231 237 247;
+    --theme-action-ghost-hover-border: 175 198 223;
+    --theme-action-ghost-hover-text: 55 69 84;
+
+    --theme-action-danger-bg: 255 228 230;
+    --theme-action-danger-border: 254 205 211;
+    --theme-action-danger-text: 190 18 60;
+    --theme-action-danger-hover-bg: 254 205 211;
+    --theme-action-danger-hover-border: 253 164 175;
+    --theme-action-danger-hover-text: 159 18 57;
+
+    --theme-state-info-bg: 240 249 255;
+    --theme-state-info-border: 186 230 253;
+    --theme-state-info-text: 7 89 133;
+    --theme-state-success-bg: 236 253 245;
+    --theme-state-success-border: 167 243 208;
+    --theme-state-success-text: 4 120 87;
+    --theme-state-warning-bg: 255 251 235;
+    --theme-state-warning-border: 253 230 138;
+    --theme-state-warning-text: 146 64 14;
+    --theme-state-danger-bg: 255 241 242;
+    --theme-state-danger-border: 254 205 211;
+    --theme-state-danger-text: 190 18 60;
+  }
+
   html,
   body,
   #app {
-    @apply min-h-full overflow-x-clip;
+    @apply h-full w-full max-w-full overflow-x-clip;
   }
 
   body {
-    @apply bg-zinc-100 text-zinc-900 antialiased transition-colors duration-300 dark:bg-zinc-950 dark:text-zinc-100;
+    @apply overflow-hidden bg-surface-app text-ink-primary antialiased transition-colors duration-300;
   }
 
   h1,
@@ -36,27 +161,27 @@
 
 @layer components {
   .skip-link {
-    @apply sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-md focus:bg-zinc-900 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:outline-none dark:focus:bg-brand-400 dark:focus:text-zinc-950;
+    @apply sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-md focus:bg-action-primary-bg focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-action-primary-text focus:outline-none;
   }
 
   .page-stack {
-    @apply space-y-6;
+    @apply flex min-h-0 flex-col gap-6;
   }
 
   .page-title {
-    @apply font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-100;
+    @apply font-display text-3xl font-semibold tracking-tight text-ink-primary sm:text-4xl;
   }
 
   .page-subtitle {
-    @apply text-sm leading-relaxed text-zinc-600 dark:text-zinc-400;
+    @apply text-sm leading-relaxed text-ink-secondary;
   }
 
   .text-secondary {
-    @apply text-zinc-600 dark:text-zinc-400;
+    @apply text-ink-secondary;
   }
 
   .text-muted {
-    @apply text-zinc-500 dark:text-zinc-500;
+    @apply text-ink-muted;
   }
 
   .row {
@@ -64,6 +189,6 @@
   }
 
   .link-inline {
-    @apply rounded-sm text-brand-700 underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 dark:text-brand-300 dark:focus-visible:ring-brand-400 dark:focus-visible:ring-offset-zinc-950;
+    @apply rounded-sm text-ink-link underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset;
   }
 }

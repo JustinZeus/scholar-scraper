@@ -18,15 +18,15 @@ const emit = defineEmits<{ dismiss: [] }>();
 
 const toneClass = computed(() => {
   if (props.tone === "danger") {
-    return "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/45 dark:text-rose-200";
+    return "border-state-danger-border bg-state-danger-bg text-state-danger-text";
   }
   if (props.tone === "warning") {
-    return "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/45 dark:text-amber-200";
+    return "border-state-warning-border bg-state-warning-bg text-state-warning-text";
   }
   if (props.tone === "success") {
-    return "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-200";
+    return "border-state-success-border bg-state-success-bg text-state-success-text";
   }
-  return "border-brand-300 bg-brand-50 text-brand-900 dark:border-brand-800 dark:bg-brand-950/45 dark:text-brand-200";
+  return "border-state-info-border bg-state-info-bg text-state-info-text";
 });
 
 const alertRole = computed(() => (props.tone === "danger" || props.tone === "warning" ? "alert" : "status"));

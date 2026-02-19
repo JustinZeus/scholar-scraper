@@ -3,12 +3,13 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 
 import AppPage from "@/components/layout/AppPage.vue";
+import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
+import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import RunStatusBadge from "@/components/patterns/RunStatusBadge.vue";
-import AppAlert from "@/components/ui/AppAlert.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
-import AppSkeleton from "@/components/ui/AppSkeleton.vue";
+import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import { getRunDetail, type RunDetail } from "@/features/runs";
 import { ApiRequestError } from "@/lib/api/errors";
@@ -96,52 +97,65 @@ onMounted(() => {
 
 <template>
   <AppPage title="Run Detail" subtitle="Per-scholar diagnostics for the selected run.">
-    <div class="flex justify-end">
-      <AppButton variant="secondary" @click="loadDetail" :disabled="loading">
-        {{ loading ? "Refreshing..." : "Refresh" }}
-      </AppButton>
-    </div>
+    <AppCard class="space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="space-y-1">
+          <div class="flex items-center gap-1">
+            <h2 class="text-lg font-semibold text-ink-primary">Diagnostics controls</h2>
+            <AppHelpHint
+              text="Run diagnostics explain per-scholar outcomes, retry behavior, and scrape failure classifications."
+            />
+          </div>
+          <p class="text-sm text-secondary">Refresh this run detail view after queue/run updates.</p>
+        </div>
+        <AppButton variant="secondary" @click="loadDetail" :disabled="loading">
+          {{ loading ? "Refreshing..." : "Refresh" }}
+        </AppButton>
+      </div>
+    </AppCard>
 
-    <AppAlert v-if="errorMessage" tone="danger">
-      <template #title>Run detail request failed</template>
-      <p>{{ errorMessage }}</p>
-      <p class="text-secondary">Request ID: {{ errorRequestId || "n/a" }}</p>
-    </AppAlert>
+    <RequestStateAlerts
+      :error-message="errorMessage"
+      :error-request-id="errorRequestId"
+      error-title="Run detail request failed"
+    />
 
-    <AppSkeleton v-if="loading" :lines="8" />
-
-    <template v-else-if="detail">
+    <AsyncStateGate :loading="loading" :loading-lines="8" :show-empty="false">
+      <template v-if="detail">
       <AppCard class="space-y-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="space-y-1">
-            <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Run #{{ detail.run.id }}</h2>
+            <div class="flex items-center gap-1">
+              <h2 class="text-lg font-semibold text-ink-primary">Run #{{ detail.run.id }}</h2>
+              <AppHelpHint text="This panel summarizes one full checking cycle and its completion status." />
+            </div>
             <p class="text-sm text-secondary">Started: {{ formatDate(detail.run.start_dt) }}</p>
             <p class="text-sm text-secondary">Ended: {{ formatDate(detail.run.end_dt) }}</p>
           </div>
           <RunStatusBadge :status="detail.run.status" />
         </div>
 
-        <p class="text-sm text-zinc-700 dark:text-zinc-300">
+        <p class="text-sm text-ink-secondary">
           Outcome summary: {{ detail.summary.succeeded_count }} succeeded, {{ detail.summary.partial_count }} partial,
           {{ detail.summary.failed_count }} failed.
         </p>
         <div class="grid gap-3 md:grid-cols-3">
-          <div class="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-            <p class="font-medium text-zinc-900 dark:text-zinc-100">Retries scheduled</p>
+          <div class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2 text-sm">
+            <p class="font-medium text-ink-primary">Retries scheduled</p>
             <p>{{ retryCounts.retries_scheduled_count }}</p>
           </div>
-          <div class="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-            <p class="font-medium text-zinc-900 dark:text-zinc-100">Scholars with retries</p>
+          <div class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2 text-sm">
+            <p class="font-medium text-ink-primary">Scholars with retries</p>
             <p>{{ retryCounts.scholars_with_retries_count }}</p>
           </div>
-          <div class="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-            <p class="font-medium text-zinc-900 dark:text-zinc-100">Retry exhausted</p>
+          <div class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2 text-sm">
+            <p class="font-medium text-ink-primary">Retry exhausted</p>
             <p>{{ retryCounts.retry_exhausted_count }}</p>
           </div>
         </div>
         <div class="grid gap-3 md:grid-cols-2">
-          <div class="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-            <p class="font-medium text-zinc-900 dark:text-zinc-100">Scrape failure buckets</p>
+          <div class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2 text-sm">
+            <p class="font-medium text-ink-primary">Scrape failure buckets</p>
             <p v-if="failureBucketEntries.length === 0" class="text-secondary">n/a</p>
             <ul v-else class="space-y-1">
               <li v-for="[name, count] in failureBucketEntries" :key="name">
@@ -149,8 +163,8 @@ onMounted(() => {
               </li>
             </ul>
           </div>
-          <div class="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-            <p class="font-medium text-zinc-900 dark:text-zinc-100">Active alerts</p>
+          <div class="rounded-xl border border-stroke-default bg-surface-card-muted px-3 py-2 text-sm">
+            <p class="font-medium text-ink-primary">Active alerts</p>
             <p v-if="alertFlagEntries.length === 0" class="text-secondary">none</p>
             <ul v-else class="space-y-1">
               <li v-for="[name] in alertFlagEntries" :key="name">
@@ -162,7 +176,10 @@ onMounted(() => {
       </AppCard>
 
       <AppCard class="space-y-4">
-        <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Scholar Results</h2>
+        <div class="flex items-center gap-1">
+          <h2 class="text-lg font-semibold text-ink-primary">Scholar Results</h2>
+          <AppHelpHint text="One row per scholar profile processed in this run, including final state and warnings." />
+        </div>
         <AppEmptyState
           v-if="detail.scholar_results.length === 0"
           title="No scholar diagnostics"
@@ -192,6 +209,7 @@ onMounted(() => {
           </tbody>
         </AppTable>
       </AppCard>
-    </template>
+      </template>
+    </AsyncStateGate>
   </AppPage>
 </template>

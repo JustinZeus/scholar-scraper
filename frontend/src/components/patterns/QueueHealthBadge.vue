@@ -8,14 +8,19 @@ const props = defineProps<{
 
 <template>
   <span
-    class="inline-flex flex-wrap items-center gap-2 rounded-full border border-zinc-300 bg-zinc-100 px-3 py-1 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+    class="inline-flex flex-wrap items-center gap-2 rounded-xl border border-stroke-default bg-surface-card-muted/90 px-3 py-1.5 text-xs text-ink-secondary"
   >
-    <span class="font-medium">Queue</span>
-    <span class="rounded-full bg-zinc-200 px-2 py-0.5 dark:bg-zinc-700">{{ props.queued }} queued</span>
-    <span class="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+    <span class="font-semibold tracking-wide text-ink-primary">Queue</span>
+    <span class="inline-flex items-center gap-1 rounded-full bg-surface-card px-2 py-0.5">
+      <span class="h-1.5 w-1.5 rounded-full bg-ink-muted" />
+      {{ props.queued }} queued
+    </span>
+    <span class="inline-flex items-center gap-1 rounded-full bg-state-warning-bg px-2 py-0.5 text-state-warning-text">
+      <span class="h-1.5 w-1.5 rounded-full bg-warning-500" />
       {{ props.retrying }} retrying
     </span>
-    <span class="rounded-full bg-rose-100 px-2 py-0.5 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+    <span class="inline-flex items-center gap-1 rounded-full bg-state-danger-bg px-2 py-0.5 text-state-danger-text">
+      <span class="h-1.5 w-1.5 rounded-full bg-danger-500" />
       {{ props.dropped }} dropped
     </span>
   </span>

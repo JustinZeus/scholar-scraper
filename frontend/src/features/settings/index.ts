@@ -4,6 +4,7 @@ export interface UserSettings {
   auto_run_enabled: boolean;
   run_interval_minutes: number;
   request_delay_seconds: number;
+  nav_visible_pages: string[];
 }
 
 export interface ChangePasswordPayload {

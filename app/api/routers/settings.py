@@ -23,6 +23,7 @@ def _serialize_settings(settings) -> dict[str, object]:
         "auto_run_enabled": bool(settings.auto_run_enabled),
         "run_interval_minutes": int(settings.run_interval_minutes),
         "request_delay_seconds": int(settings.request_delay_seconds),
+        "nav_visible_pages": list(settings.nav_visible_pages or []),
     }
 
 
@@ -55,12 +56,22 @@ async def update_settings(
     db_session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_api_current_user),
 ):
+    settings = await user_settings_service.get_or_create_settings(
+        db_session,
+        user_id=current_user.id,
+    )
+
     try:
         parsed_interval = user_settings_service.parse_run_interval_minutes(
             str(payload.run_interval_minutes)
         )
         parsed_delay = user_settings_service.parse_request_delay_seconds(
             str(payload.request_delay_seconds)
+        )
+        parsed_nav_visible_pages = user_settings_service.parse_nav_visible_pages(
+            payload.nav_visible_pages
+            if payload.nav_visible_pages is not None
+            else list(settings.nav_visible_pages or user_settings_service.DEFAULT_NAV_VISIBLE_PAGES)
         )
     except user_settings_service.UserSettingsServiceError as exc:
         raise ApiException(
@@ -69,16 +80,13 @@ async def update_settings(
             message=str(exc),
         ) from exc
 
-    settings = await user_settings_service.get_or_create_settings(
-        db_session,
-        user_id=current_user.id,
-    )
     updated = await user_settings_service.update_settings(
         db_session,
         settings=settings,
         auto_run_enabled=bool(payload.auto_run_enabled),
         run_interval_minutes=parsed_interval,
         request_delay_seconds=parsed_delay,
+        nav_visible_pages=parsed_nav_visible_pages,
     )
     logger.info(
         "api.settings.updated",
@@ -88,6 +96,7 @@ async def update_settings(
             "auto_run_enabled": updated.auto_run_enabled,
             "run_interval_minutes": updated.run_interval_minutes,
             "request_delay_seconds": updated.request_delay_seconds,
+            "nav_visible_pages": updated.nav_visible_pages,
         },
     )
     return success_payload(

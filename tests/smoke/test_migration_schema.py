@@ -1,6 +1,15 @@
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def expected_head_revision() -> str:
+    script = ScriptDirectory.from_config(Config("alembic.ini"))
+    head = script.get_current_head()
+    assert head is not None
+    return head
 
 
 @pytest.mark.integration
@@ -9,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 @pytest.mark.asyncio
 async def test_schema_head_revision_is_available(db_session: AsyncSession) -> None:
     result = await db_session.execute(text("SELECT version_num FROM alembic_version"))
-    assert result.scalar_one() == "20260217_0007"
+    assert result.scalar_one() == expected_head_revision()
 
 
 @pytest.mark.integration
