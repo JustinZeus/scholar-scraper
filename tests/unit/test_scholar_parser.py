@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.scholar_parser import (
+import pytest
+
+from app.services.domains.scholar.parser import (
     ParseState,
+    ScholarDomInvariantError,
     parse_author_search_page,
     parse_profile_page,
 )
-from app.services.scholar_source import FetchResult
+from app.services.domains.scholar.source import FetchResult
 
 
 def _fixture(name: str) -> str:
@@ -98,7 +101,7 @@ def test_parse_profile_page_handles_missing_optional_metadata() -> None:
     assert publication.venue_text is None
 
 
-def test_parse_profile_page_extracts_direct_pdf_link() -> None:
+def test_parse_profile_page_ignores_direct_pdf_link_markup() -> None:
     html = """
     <html>
       <div id="gsc_prf_in">Direct PDF Test</div>
@@ -131,7 +134,7 @@ def test_parse_profile_page_extracts_direct_pdf_link() -> None:
 
     assert parsed.state == ParseState.OK
     assert len(parsed.publications) == 1
-    assert parsed.publications[0].pdf_url == "https://example.org/paper.pdf"
+    assert parsed.publications[0].pdf_url is None
 
 
 def test_parse_profile_page_fails_fast_when_citation_markup_is_unparseable() -> None:
@@ -160,10 +163,9 @@ def test_parse_profile_page_fails_fast_when_citation_markup_is_unparseable() -> 
         error=None,
     )
 
-    parsed = parse_profile_page(fetch_result)
-
-    assert parsed.state == ParseState.LAYOUT_CHANGED
-    assert parsed.state_reason == "layout_row_citation_unparseable"
+    with pytest.raises(ScholarDomInvariantError) as exc:
+        parse_profile_page(fetch_result)
+    assert exc.value.code == "layout_row_citation_unparseable"
 
 
 def test_parse_profile_page_detects_layout_change_when_markers_absent() -> None:
@@ -175,11 +177,9 @@ def test_parse_profile_page_detects_layout_change_when_markers_absent() -> None:
         error=None,
     )
 
-    parsed = parse_profile_page(fetch_result)
-
-    assert parsed.state == ParseState.LAYOUT_CHANGED
-    assert parsed.state_reason == "layout_markers_missing"
-    assert "no_rows_detected" in parsed.warnings
+    with pytest.raises(ScholarDomInvariantError) as exc:
+        parse_profile_page(fetch_result)
+    assert exc.value.code == "layout_markers_missing"
 
 
 def test_parse_profile_page_reports_network_reason_when_status_missing() -> None:

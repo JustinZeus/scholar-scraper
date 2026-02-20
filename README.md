@@ -78,15 +78,18 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 - Scholar tracking is user-scoped: each account can track the same Scholar ID independently.
 - Publications are shared/global records deduplicated by Scholar cluster ID and normalized fingerprint.
 - Per-account visibility and read state is stored on scholar-publication links, not on the global publication row.
-- Publication records include both canonical Scholar detail URLs (`pub_url`) and direct download targets (`pdf_url`) when available.
+- Publication records include canonical Scholar detail URLs (`pub_url`), normalized DOI (`doi`), and resolved OA PDF links (`pdf_url`) when available.
 
 ## Backend Architecture (Refactored)
 
-- Compatibility facades remain in `app/services/*.py`, but canonical service logic now lives in `app/services/domains/*`.
+- Canonical service logic lives in `app/services/domains/*`; root-level `app/services/*.py` business-logic modules are removed.
 - `app/services/domains/ingestion/*`: run orchestration (`application.py`), continuation queue (`queue.py`), scrape safety cooldown policy (`safety.py`), scheduler/queue draining (`scheduler.py`), plus shared constants/types/fingerprint helpers.
 - `app/services/domains/scholar/*`: fail-fast Google Scholar parsing and source access. Parser flow is modularized across row extractors, state detection, constants, and parser types.
 - `app/services/domains/scholars/*`: scholar CRUD, name-search safety/caching, profile-image validation/upload handling, and shared scholar validation helpers.
-- `app/services/domains/publications/*`: publication listing/read-state query modules for dashboard/publication UIs (`pub_url` + `pdf_url`).
+- `app/services/domains/publications/*`: publication listing/read-state query modules, lazy/background OA enrichment scheduling (non-blocking for list responses), and per-publication PDF retry support.
+- `app/services/domains/doi/*`: DOI normalization helpers used by ingestion and enrichment.
+- `app/services/domains/crossref/*`: DOI discovery fallback using Crossref metadata queries with bounded/paced request behavior.
+- `app/services/domains/unpaywall/*`: OA resolution by DOI (best OA location + PDF URL extraction), using per-user email for API calls.
 - `app/services/domains/runs/*`: run history summaries plus continuation queue status/retry/drop/clear operations.
 - `app/services/domains/portability/*`: import/export of tracked scholars and publication-link state while preserving global publication deduplication.
 - `app/services/domains/settings/*` and `app/services/domains/users/*`: user settings and user management services.
@@ -225,6 +228,21 @@ Notes:
 | `SCHOLAR_NAME_SEARCH_ALERT_RETRY_COUNT_THRESHOLD` | `2` | integer >= 1 | deploy, dev | Emit retry-threshold observability warning when name-search retry count reaches this value. |
 | `SCHOLAR_NAME_SEARCH_ALERT_COOLDOWN_REJECTIONS_THRESHOLD` | `3` | integer >= 1 | deploy, dev | Emit cooldown-threshold observability alert after this many requests are rejected during active cooldown. |
 
+### Open-Access Enrichment (Crossref + Unpaywall)
+
+| Variable | Default | Options | Scope | Description |
+| --- | --- | --- | --- | --- |
+| `UNPAYWALL_ENABLED` | `1` | boolean | deploy, dev | Enable Unpaywall OA resolution. |
+| `UNPAYWALL_EMAIL` | empty | valid email | deploy, dev | Fallback email if per-user email is unavailable. |
+| `UNPAYWALL_TIMEOUT_SECONDS` | `4.0` | float >= 0.5 | deploy, dev | Timeout for Unpaywall requests. |
+| `UNPAYWALL_MAX_ITEMS_PER_REQUEST` | `20` | integer >= 0 | deploy, dev | Max publications queued per lazy enrichment pass. |
+| `UNPAYWALL_RETRY_COOLDOWN_SECONDS` | `1800` | integer >= 1 | deploy, dev | Per-user/per-publication cooldown before re-scheduling unresolved OA lookups. |
+| `CROSSREF_ENABLED` | `1` | boolean | deploy, dev | Enable Crossref DOI discovery fallback when DOI is missing/insufficient. |
+| `CROSSREF_MAX_ROWS` | `10` | integer >= 1 | deploy, dev | Max Crossref rows evaluated per lookup. |
+| `CROSSREF_TIMEOUT_SECONDS` | `8.0` | float >= 0.5 | deploy, dev | Timeout budget per Crossref lookup task. |
+| `CROSSREF_MIN_INTERVAL_SECONDS` | `0.6` | float >= 0 | deploy, dev | Minimum pacing interval between Crossref requests. |
+| `CROSSREF_MAX_LOOKUPS_PER_REQUEST` | `8` | integer >= 0 | deploy, dev | Max Crossref DOI lookups performed during one lazy pass or manual retry. |
+
 ### Scrape Safety Operations
 
 - Structured safety events are emitted for:
@@ -290,7 +308,12 @@ Scheduled fixture probes run in GitHub Actions via `.github/workflows/scheduled-
 - `GET /api/v1/publications` supports `mode=all|unread|latest` (plus temporary alias `mode=new`).
 - `unread` = actionable read-state (`is_read=false`).
 - `latest` = discovery-state (`first seen in the latest completed check`).
-- Publications include `pub_url` and `pdf_url` in API responses. `pdf_url` is a direct-download target extracted from Scholar result-side links when present.
+- Publications include `pub_url`, `doi`, and `pdf_url` in API responses.
+- OA enrichment flow is DOI-first:
+  - existing DOI (or explicit DOI in source metadata) -> Unpaywall lookup,
+  - Crossref DOI discovery fallback (paced + bounded),
+  - Unpaywall DOI lookup for OA status and `pdf_url`.
+- `POST /api/v1/publications/{publication_id}/retry-pdf` retries enrichment for a single publication in current user scope.
 - Response counters:
   - `unread_count`: unread publications in current scope.
   - `latest_count`: publications discovered in latest completed check.

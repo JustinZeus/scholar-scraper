@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import scholars as scholar_service
-from app.services.scholar_parser import ParseState
-from app.services.scholar_source import FetchResult
+from app.services.domains.scholars import application as scholar_service
+from app.services.domains.scholar.parser import ParseState
+from app.services.domains.scholar.source import FetchResult
 
 pytestmark = [pytest.mark.integration, pytest.mark.db]
 

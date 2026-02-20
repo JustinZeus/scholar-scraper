@@ -11,6 +11,7 @@ export interface PublicationItem {
   citation_count: number;
   venue_text: string | null;
   pub_url: string | null;
+  doi: string | null;
   pdf_url: string | null;
   is_read: boolean;
   first_seen_at: string;
@@ -81,5 +82,25 @@ export async function markSelectedRead(selections: PublicationSelection[]): Prom
     method: "POST",
     body: { selections },
   });
+  return response.data;
+}
+
+export interface RetryPublicationPdfResult {
+  message: string;
+  resolved_pdf: boolean;
+  publication: PublicationItem;
+}
+
+export async function retryPublicationPdf(
+  publicationId: number,
+  scholarProfileId: number,
+): Promise<RetryPublicationPdfResult> {
+  const response = await apiRequest<RetryPublicationPdfResult>(
+    `/publications/${publicationId}/retry-pdf`,
+    {
+      method: "POST",
+      body: { scholar_profile_id: scholarProfileId },
+    },
+  );
   return response.data;
 }

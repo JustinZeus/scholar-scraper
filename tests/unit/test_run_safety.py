@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.db.models import UserSetting
-from app.services import run_safety
+from app.services.domains.ingestion import safety as run_safety
 
 
 def test_apply_run_safety_outcome_triggers_blocked_cooldown() -> None:

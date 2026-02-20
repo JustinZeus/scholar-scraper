@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.runs import extract_run_summary
+from app.services.domains.runs.application import extract_run_summary
 
 
 def test_extract_run_summary_includes_extended_metrics() -> None:

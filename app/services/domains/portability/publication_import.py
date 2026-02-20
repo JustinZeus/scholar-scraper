@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Publication, ScholarProfile, ScholarPublication
 from app.services.domains.ingestion.application import build_publication_url, normalize_title
+from app.services.domains.doi.normalize import normalize_doi
 from app.services.domains.portability.normalize import (
     _normalize_citation_count,
     _normalize_optional_text,
@@ -70,6 +71,7 @@ def _apply_imported_publication_values(
     author_text: str | None,
     venue_text: str | None,
     pub_url: str | None,
+    doi: str | None,
     pdf_url: str | None,
     cluster_id: str | None,
 ) -> bool:
@@ -96,6 +98,9 @@ def _apply_imported_publication_values(
     if pub_url and publication.pub_url != pub_url:
         publication.pub_url = pub_url
         updated = True
+    if doi and publication.doi != doi:
+        publication.doi = doi
+        updated = True
     if pdf_url and publication.pdf_url != pdf_url:
         publication.pdf_url = pdf_url
         updated = True
@@ -112,6 +117,7 @@ def _new_publication(
     author_text: str | None,
     venue_text: str | None,
     pub_url: str | None,
+    doi: str | None,
     pdf_url: str | None,
 ) -> Publication:
     return Publication(
@@ -124,6 +130,7 @@ def _new_publication(
         author_text=author_text,
         venue_text=venue_text,
         pub_url=pub_url,
+        doi=doi,
         pdf_url=pdf_url,
     )
 
@@ -226,6 +233,7 @@ def _build_imported_publication_input(
         venue_text=venue_text,
         cluster_id=_normalize_optional_text(item.get("cluster_id")),
         pub_url=build_publication_url(_normalize_optional_text(item.get("pub_url"))),
+        doi=normalize_doi(_normalize_optional_text(item.get("doi"))),
         pdf_url=build_publication_url(_normalize_optional_text(item.get("pdf_url"))),
         fingerprint=_resolve_fingerprint(
             title=title,
@@ -277,6 +285,7 @@ async def _create_import_publication(
         author_text=payload.author_text,
         venue_text=payload.venue_text,
         pub_url=payload.pub_url,
+        doi=payload.doi,
         pdf_url=payload.pdf_url,
     )
     db_session.add(publication)
@@ -297,6 +306,7 @@ def _update_import_publication(
         author_text=payload.author_text,
         venue_text=payload.venue_text,
         pub_url=payload.pub_url,
+        doi=payload.doi,
         pdf_url=payload.pdf_url,
         cluster_id=payload.cluster_id,
     )

@@ -227,6 +227,7 @@ class Publication(Base):
     author_text: Mapped[str | None] = mapped_column(Text)
     venue_text: Mapped[str | None] = mapped_column(Text)
     pub_url: Mapped[str | None] = mapped_column(Text)
+    doi: Mapped[str | None] = mapped_column(String(255))
     pdf_url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

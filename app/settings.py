@@ -229,6 +229,16 @@ class Settings:
         "SCHOLAR_NAME_SEARCH_ALERT_COOLDOWN_REJECTIONS_THRESHOLD",
         3,
     )
+    unpaywall_enabled: bool = _env_bool("UNPAYWALL_ENABLED", True)
+    unpaywall_email: str = _env_str("UNPAYWALL_EMAIL", "")
+    unpaywall_timeout_seconds: float = _env_float("UNPAYWALL_TIMEOUT_SECONDS", 4.0)
+    unpaywall_max_items_per_request: int = _env_int("UNPAYWALL_MAX_ITEMS_PER_REQUEST", 20)
+    unpaywall_retry_cooldown_seconds: int = _env_int("UNPAYWALL_RETRY_COOLDOWN_SECONDS", 1800)
+    crossref_enabled: bool = _env_bool("CROSSREF_ENABLED", True)
+    crossref_max_rows: int = _env_int("CROSSREF_MAX_ROWS", 10)
+    crossref_timeout_seconds: float = _env_float("CROSSREF_TIMEOUT_SECONDS", 8.0)
+    crossref_min_interval_seconds: float = _env_float("CROSSREF_MIN_INTERVAL_SECONDS", 0.6)
+    crossref_max_lookups_per_request: int = _env_int("CROSSREF_MAX_LOOKUPS_PER_REQUEST", 8)
 
 
 settings = Settings()

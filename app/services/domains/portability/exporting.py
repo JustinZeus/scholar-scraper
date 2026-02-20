@@ -34,6 +34,7 @@ def _serialize_export_publication(row: tuple[Any, ...]) -> dict[str, Any]:
         author_text,
         venue_text,
         pub_url,
+        doi,
         pdf_url,
         is_read,
     ) = row
@@ -47,6 +48,7 @@ def _serialize_export_publication(row: tuple[Any, ...]) -> dict[str, Any]:
         "author_text": author_text,
         "venue_text": venue_text,
         "pub_url": pub_url,
+        "doi": doi,
         "pdf_url": pdf_url,
         "is_read": bool(is_read),
     }
@@ -73,6 +75,7 @@ async def export_user_data(
             Publication.author_text,
             Publication.venue_text,
             Publication.pub_url,
+            Publication.doi,
             Publication.pdf_url,
             ScholarPublication.is_read,
         )

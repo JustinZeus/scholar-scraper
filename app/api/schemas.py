@@ -205,6 +205,7 @@ class PublicationExportItemData(BaseModel):
     author_text: str | None = None
     venue_text: str | None = None
     pub_url: str | None = None
+    doi: str | None = None
     pdf_url: str | None = None
     is_read: bool = False
 
@@ -573,6 +574,7 @@ class PublicationItemData(BaseModel):
     citation_count: int
     venue_text: str | None
     pub_url: str | None
+    doi: str | None
     pdf_url: str | None
     is_read: bool
     first_seen_at: datetime
@@ -637,6 +639,27 @@ class MarkSelectedReadData(BaseModel):
 
 class MarkSelectedReadEnvelope(BaseModel):
     data: MarkSelectedReadData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetryPublicationPdfRequest(BaseModel):
+    scholar_profile_id: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetryPublicationPdfData(BaseModel):
+    message: str
+    resolved_pdf: bool
+    publication: PublicationItemData
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetryPublicationPdfEnvelope(BaseModel):
+    data: RetryPublicationPdfData
     meta: ApiMeta
 
     model_config = ConfigDict(extra="forbid")

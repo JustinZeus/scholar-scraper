@@ -8,8 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import RunStatus, RunTriggerType
-from app.services.ingestion import ScholarIngestionService
-from app.services.scholar_source import FetchResult
+from app.services.domains.ingestion.application import ScholarIngestionService
+from app.services.domains.scholar.source import FetchResult
 from tests.integration.helpers import insert_user
 
 REGRESSION_FIXTURE_DIR = Path("tests/fixtures/scholar/regression")

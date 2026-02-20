@@ -28,6 +28,7 @@ from app.services.domains.ingestion.constants import (
     RESUMABLE_PARTIAL_REASONS,
     RUN_LOCK_NAMESPACE,
 )
+from app.services.domains.doi.normalize import first_doi_from_texts
 from app.services.domains.ingestion.fingerprints import (
     _build_body_excerpt,
     _dedupe_publication_candidates,
@@ -55,6 +56,7 @@ from app.services.domains.scholar.parser import (
     ParseState,
     ParsedProfilePage,
     PublicationCandidate,
+    ScholarParserError,
     parse_profile_page,
 )
 from app.services.domains.scholar.source import FetchResult, ScholarSource
@@ -1431,7 +1433,7 @@ class ScholarIngestionService:
                 cstart=cstart,
                 page_size=page_size,
             )
-            parsed_page = parse_profile_page(fetch_result)
+            parsed_page = self._parse_profile_page_or_layout_error(fetch_result=fetch_result)
             attempt_log.append(
                 self._attempt_log_entry(
                     attempt=attempt_index + 1,
@@ -1457,6 +1459,38 @@ class ScholarIngestionService:
         if fetch_result is None or parsed_page is None:
             raise RuntimeError("Fetch-and-parse retry loop produced no result.")
         return fetch_result, parsed_page, attempt_log
+
+    def _parse_profile_page_or_layout_error(
+        self,
+        *,
+        fetch_result: FetchResult,
+    ) -> ParsedProfilePage:
+        try:
+            return parse_profile_page(fetch_result)
+        except ScholarParserError as exc:
+            return self._parsed_page_from_parser_error(
+                fetch_result=fetch_result,
+                code=exc.code,
+            )
+
+    @staticmethod
+    def _parsed_page_from_parser_error(
+        *,
+        fetch_result: FetchResult,
+        code: str,
+    ) -> ParsedProfilePage:
+        return ParsedProfilePage(
+            state=ParseState.LAYOUT_CHANGED,
+            state_reason=code,
+            profile_name=None,
+            profile_image_url=None,
+            publications=[],
+            marker_counts={},
+            warnings=[code],
+            has_show_more_button=False,
+            has_operation_error_banner=False,
+            articles_range=None,
+        )
 
     @staticmethod
     def _page_log_entry(
@@ -1942,7 +1976,8 @@ class ScholarIngestionService:
             author_text=candidate.authors_text,
             venue_text=candidate.venue_text,
             pub_url=build_publication_url(candidate.title_url),
-            pdf_url=build_publication_url(candidate.pdf_url),
+            doi=first_doi_from_texts(candidate.title_url, candidate.venue_text, candidate.title),
+            pdf_url=None,
         )
         db_session.add(publication)
         await db_session.flush()
@@ -1976,8 +2011,9 @@ class ScholarIngestionService:
             publication.venue_text = candidate.venue_text
         if candidate.title_url:
             publication.pub_url = build_publication_url(candidate.title_url)
-        if candidate.pdf_url:
-            publication.pdf_url = build_publication_url(candidate.pdf_url)
+        local_doi = first_doi_from_texts(candidate.title_url, candidate.venue_text, candidate.title)
+        if local_doi and not publication.doi:
+            publication.doi = local_doi
 
     async def _resolve_publication(
         self,

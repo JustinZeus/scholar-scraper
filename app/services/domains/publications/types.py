@@ -14,6 +14,7 @@ class PublicationListItem:
     citation_count: int
     venue_text: str | None
     pub_url: str | None
+    doi: str | None
     pdf_url: str | None
     is_read: bool
     first_seen_at: datetime
@@ -30,4 +31,5 @@ class UnreadPublicationItem:
     citation_count: int
     venue_text: str | None
     pub_url: str | None
+    doi: str | None
     pdf_url: str | None

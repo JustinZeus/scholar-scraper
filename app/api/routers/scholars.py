@@ -25,9 +25,9 @@ from app.api.schemas import (
 )
 from app.db.models import User
 from app.db.session import get_db_session
-from app.services import import_export as import_export_service
-from app.services import scholars as scholar_service
-from app.services.scholar_source import ScholarSource
+from app.services.domains.portability import application as import_export_service
+from app.services.domains.scholars import application as scholar_service
+from app.services.domains.scholar.source import ScholarSource
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,107 @@ def _serialize_scholar(profile) -> dict[str, object]:
             profile.last_run_status.value if profile.last_run_status is not None else None
         ),
     }
+
+
+async def _hydrate_scholar_metadata_if_needed(
+    db_session: AsyncSession,
+    *,
+    profile,
+    source: ScholarSource,
+    user_id: int,
+):
+    try:
+        if not profile.profile_image_url or not (profile.display_name or "").strip():
+            return await asyncio.wait_for(
+                scholar_service.hydrate_profile_metadata(
+                    db_session,
+                    profile=profile,
+                    source=source,
+                ),
+                timeout=5.0,
+            )
+    except Exception:
+        logger.warning(
+            "api.scholars.create_metadata_hydration_failed",
+            extra={
+                "event": "api.scholars.create_metadata_hydration_failed",
+                "user_id": user_id,
+                "scholar_profile_id": profile.id,
+            },
+        )
+    return profile
+
+
+def _search_kwargs() -> dict[str, object]:
+    return {
+        "network_error_retries": settings.ingestion_network_error_retries,
+        "retry_backoff_seconds": settings.ingestion_retry_backoff_seconds,
+        "search_enabled": settings.scholar_name_search_enabled,
+        "cache_ttl_seconds": settings.scholar_name_search_cache_ttl_seconds,
+        "blocked_cache_ttl_seconds": settings.scholar_name_search_blocked_cache_ttl_seconds,
+        "cache_max_entries": settings.scholar_name_search_cache_max_entries,
+        "min_interval_seconds": settings.scholar_name_search_min_interval_seconds,
+        "interval_jitter_seconds": settings.scholar_name_search_interval_jitter_seconds,
+        "cooldown_block_threshold": settings.scholar_name_search_cooldown_block_threshold,
+        "cooldown_seconds": settings.scholar_name_search_cooldown_seconds,
+        "retry_alert_threshold": settings.scholar_name_search_alert_retry_count_threshold,
+        "cooldown_rejection_alert_threshold": (
+            settings.scholar_name_search_alert_cooldown_rejections_threshold
+        ),
+    }
+
+
+def _search_response_data(query: str, parsed) -> dict[str, object]:
+    return {
+        "query": query.strip(),
+        "state": parsed.state.value,
+        "state_reason": parsed.state_reason,
+        "action_hint": scholar_service.scrape_state_hint(
+            state=parsed.state,
+            state_reason=parsed.state_reason,
+        ),
+        "candidates": [
+            {
+                "scholar_id": item.scholar_id,
+                "display_name": item.display_name,
+                "affiliation": item.affiliation,
+                "email_domain": item.email_domain,
+                "cited_by_count": item.cited_by_count,
+                "interests": item.interests,
+                "profile_url": item.profile_url,
+                "profile_image_url": item.profile_image_url,
+            }
+            for item in parsed.candidates
+        ],
+        "warnings": parsed.warnings,
+    }
+
+
+async def _read_uploaded_image(image: UploadFile) -> bytes:
+    try:
+        return await image.read()
+    finally:
+        await image.close()
+
+
+async def _require_user_profile(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_profile_id: int,
+):
+    profile = await scholar_service.get_user_scholar_by_id(
+        db_session,
+        user_id=user_id,
+        scholar_profile_id=scholar_profile_id,
+    )
+    if profile is None:
+        raise ApiException(
+            status_code=404,
+            code="scholar_not_found",
+            message="Scholar not found.",
+        )
+    return profile
 
 
 @router.get(
@@ -181,25 +282,12 @@ async def create_scholar(
             "scholar_profile_id": created.id,
         },
     )
-    try:
-        if not created.profile_image_url or not (created.display_name or "").strip():
-            created = await asyncio.wait_for(
-                scholar_service.hydrate_profile_metadata(
-                    db_session,
-                    profile=created,
-                    source=source,
-                ),
-                timeout=5.0,
-            )
-    except Exception:
-        logger.warning(
-            "api.scholars.create_metadata_hydration_failed",
-            extra={
-                "event": "api.scholars.create_metadata_hydration_failed",
-                "user_id": current_user.id,
-                "scholar_profile_id": created.id,
-            },
-        )
+    created = await _hydrate_scholar_metadata_if_needed(
+        db_session,
+        profile=created,
+        source=source,
+        user_id=current_user.id,
+    )
 
     return success_payload(
         request,
@@ -225,20 +313,7 @@ async def search_scholars(
             db_session=db_session,
             query=query,
             limit=limit,
-            network_error_retries=settings.ingestion_network_error_retries,
-            retry_backoff_seconds=settings.ingestion_retry_backoff_seconds,
-            search_enabled=settings.scholar_name_search_enabled,
-            cache_ttl_seconds=settings.scholar_name_search_cache_ttl_seconds,
-            blocked_cache_ttl_seconds=settings.scholar_name_search_blocked_cache_ttl_seconds,
-            cache_max_entries=settings.scholar_name_search_cache_max_entries,
-            min_interval_seconds=settings.scholar_name_search_min_interval_seconds,
-            interval_jitter_seconds=settings.scholar_name_search_interval_jitter_seconds,
-            cooldown_block_threshold=settings.scholar_name_search_cooldown_block_threshold,
-            cooldown_seconds=settings.scholar_name_search_cooldown_seconds,
-            retry_alert_threshold=settings.scholar_name_search_alert_retry_count_threshold,
-            cooldown_rejection_alert_threshold=(
-                settings.scholar_name_search_alert_cooldown_rejections_threshold
-            ),
+            **_search_kwargs(),
         )
     except scholar_service.ScholarServiceError as exc:
         raise ApiException(
@@ -259,29 +334,7 @@ async def search_scholars(
     )
     return success_payload(
         request,
-        data={
-            "query": query.strip(),
-            "state": parsed.state.value,
-            "state_reason": parsed.state_reason,
-            "action_hint": scholar_service.scrape_state_hint(
-                state=parsed.state,
-                state_reason=parsed.state_reason,
-            ),
-            "candidates": [
-                {
-                    "scholar_id": item.scholar_id,
-                    "display_name": item.display_name,
-                    "affiliation": item.affiliation,
-                    "email_domain": item.email_domain,
-                    "cited_by_count": item.cited_by_count,
-                    "interests": item.interests,
-                    "profile_url": item.profile_url,
-                    "profile_image_url": item.profile_image_url,
-                }
-                for item in parsed.candidates
-            ],
-            "warnings": parsed.warnings,
-        },
+        data=_search_response_data(query, parsed),
     )
 
 
@@ -424,20 +477,14 @@ async def upload_scholar_image(
     db_session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_api_current_user),
 ):
-    profile = await scholar_service.get_user_scholar_by_id(
+    profile = await _require_user_profile(
         db_session,
         user_id=current_user.id,
         scholar_profile_id=scholar_profile_id,
     )
-    if profile is None:
-        raise ApiException(
-            status_code=404,
-            code="scholar_not_found",
-            message="Scholar not found.",
-        )
 
+    image_bytes = await _read_uploaded_image(image)
     try:
-        image_bytes = await image.read()
         updated = await scholar_service.set_profile_image_upload(
             db_session,
             profile=profile,
@@ -452,9 +499,8 @@ async def upload_scholar_image(
             code="invalid_scholar_image",
             message=str(exc),
         ) from exc
-    finally:
-        await image.close()
 
+    image_size = len(image_bytes)
     logger.info(
         "api.scholars.image_uploaded",
         extra={
@@ -462,7 +508,7 @@ async def upload_scholar_image(
             "user_id": current_user.id,
             "scholar_profile_id": updated.id,
             "content_type": image.content_type,
-            "size_bytes": len(image_bytes),
+            "size_bytes": image_size,
         },
     )
     return success_payload(

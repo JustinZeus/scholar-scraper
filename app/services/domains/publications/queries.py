@@ -50,6 +50,7 @@ def publications_query(
             Publication.citation_count,
             Publication.venue_text,
             Publication.pub_url,
+            Publication.doi,
             Publication.pdf_url,
             ScholarPublication.is_read,
             ScholarPublication.first_seen_run_id,
@@ -72,6 +73,61 @@ def publications_query(
     return stmt
 
 
+def publication_query_for_user(
+    *,
+    user_id: int,
+    scholar_profile_id: int,
+    publication_id: int,
+) -> Select[tuple]:
+    return (
+        select(
+            Publication.id,
+            ScholarProfile.id,
+            ScholarProfile.display_name,
+            ScholarProfile.scholar_id,
+            Publication.title_raw,
+            Publication.year,
+            Publication.citation_count,
+            Publication.venue_text,
+            Publication.pub_url,
+            Publication.doi,
+            Publication.pdf_url,
+            ScholarPublication.is_read,
+            ScholarPublication.first_seen_run_id,
+            ScholarPublication.created_at,
+        )
+        .join(ScholarPublication, ScholarPublication.publication_id == Publication.id)
+        .join(ScholarProfile, ScholarProfile.id == ScholarPublication.scholar_profile_id)
+        .where(
+            ScholarProfile.user_id == user_id,
+            ScholarProfile.id == scholar_profile_id,
+            Publication.id == publication_id,
+        )
+        .limit(1)
+    )
+
+
+async def get_publication_item_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_profile_id: int,
+    publication_id: int,
+) -> PublicationListItem | None:
+    latest_run_id = await get_latest_completed_run_id_for_user(db_session, user_id=user_id)
+    result = await db_session.execute(
+        publication_query_for_user(
+            user_id=user_id,
+            scholar_profile_id=scholar_profile_id,
+            publication_id=publication_id,
+        )
+    )
+    row = result.one_or_none()
+    if row is None:
+        return None
+    return publication_list_item_from_row(row, latest_run_id=latest_run_id)
+
+
 def publication_list_item_from_row(
     row: tuple,
     *,
@@ -87,6 +143,7 @@ def publication_list_item_from_row(
         citation_count,
         venue_text,
         pub_url,
+        doi,
         pdf_url,
         is_read,
         first_seen_run_id,
@@ -101,6 +158,7 @@ def publication_list_item_from_row(
         citation_count=_normalized_citation_count(citation_count),
         venue_text=venue_text,
         pub_url=pub_url,
+        doi=doi,
         pdf_url=pdf_url,
         is_read=bool(is_read),
         first_seen_at=created_at,
@@ -121,6 +179,7 @@ def unread_item_from_row(row: tuple) -> UnreadPublicationItem:
         citation_count,
         venue_text,
         pub_url,
+        doi,
         pdf_url,
         _is_read,
         _first_seen_run_id,
@@ -135,5 +194,6 @@ def unread_item_from_row(row: tuple) -> UnreadPublicationItem:
         citation_count=_normalized_citation_count(citation_count),
         venue_text=venue_text,
         pub_url=pub_url,
+        doi=doi,
         pdf_url=pdf_url,
     )
