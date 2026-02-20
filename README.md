@@ -4,7 +4,7 @@
 
 Self-hosted scholar tracking with a single app image (API + frontend).
 
-[![CI](https://img.shields.io/github/actions/workflow/status/justinzeus/scholarr/ci.yml?style=for-the-badge)](https://github.com/justinzeus/scholarr/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/justinzeus/scholarr/ci.yml?style=for-the-badge)](https://github.com/JustinZeus/scholar-scraper/actions/workflows/ci.yml)
 [![Docker Pulls](https://img.shields.io/docker/pulls/justinzeus/scholarr?style=for-the-badge&logo=docker)](https://hub.docker.com/r/justinzeus/scholarr)
 [![Docker Image](https://img.shields.io/badge/docker-justinzeus%2Fscholarr-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/justinzeus/scholarr)
 
@@ -82,11 +82,20 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 
 ## Backend Architecture (Refactored)
 
-- `app/services/ingestion.py`: run orchestration, page retry/pagination logic, publication upsert/dedup, safety counters, continuation queue sync.
-- `app/services/scholar_parser.py`: strict DOM parsing with explicit layout-state detection and fail-fast warning codes for malformed Scholar markup.
-- `app/services/scheduler.py`: automatic/scheduled ingestion runner plus continuation queue draining and retry/drop policy.
-- `app/services/publications.py`: user-scoped publication listing/read-state update queries used by dashboard/publication UIs.
-- `app/services/import_export.py`: JSON import/export for tracked scholars and publication link state.
+- Compatibility facades remain in `app/services/*.py`, but canonical service logic now lives in `app/services/domains/*`.
+- `app/services/domains/ingestion/*`: run orchestration (`application.py`), continuation queue (`queue.py`), scrape safety cooldown policy (`safety.py`), scheduler/queue draining (`scheduler.py`), plus shared constants/types/fingerprint helpers.
+- `app/services/domains/scholar/*`: fail-fast Google Scholar parsing and source access. Parser flow is modularized across row extractors, state detection, constants, and parser types.
+- `app/services/domains/scholars/*`: scholar CRUD, name-search safety/caching, profile-image validation/upload handling, and shared scholar validation helpers.
+- `app/services/domains/publications/*`: publication listing/read-state query modules for dashboard/publication UIs (`pub_url` + `pdf_url`).
+- `app/services/domains/runs/*`: run history summaries plus continuation queue status/retry/drop/clear operations.
+- `app/services/domains/portability/*`: import/export of tracked scholars and publication-link state while preserving global publication deduplication.
+- `app/services/domains/settings/*` and `app/services/domains/users/*`: user settings and user management services.
+
+## Frontend Navigation and Layout Notes
+
+- On mobile (`< lg`), primary navigation is behind a header hamburger and opens as a left-side drawer with backdrop.
+- Mobile nav closes on route change, nav link click, and logout.
+- Long lists are constrained to internal scroll containers in fill-layout pages (including dashboard recent publications and tracked scholars table view).
 
 ## Name Search Status
 

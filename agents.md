@@ -28,8 +28,9 @@ These limits prevent IP bans and are not to be optimized away.
 * **Infrastructure:** Multi-stage Docker.
 
 ## 5. Refactored Service Boundaries (Current)
-* **`app/services/scholar_parser.py`:** Parser contract is fail-fast. Layout drift must emit explicit `layout_*` reasons/warnings, never silent partial success.
-* **`app/services/ingestion.py`:** Orchestrates ingestion runs; validate parser outputs before persistence; enforce publication candidate constraints before upsert.
-* **`app/services/publications.py`:** Publication list/read-state query layer; include both `pub_url` and `pdf_url` for UI consumption.
-* **`app/services/import_export.py`:** Handles JSON import/export for user-scoped scholars and scholar-publication link state while preserving global publication dedup rules.
-* **`app/services/scheduler.py`:** Owns automatic runs and continuation queue retries/drops; do not bypass safety gate or cooldown logic.
+* **Compatibility rule:** `app/services/*.py` files are import façades only. Keep them thin and route all real logic to domain modules.
+* **`app/services/domains/scholar/*`:** Parser contract is fail-fast. Layout drift must emit explicit `layout_*` reasons/warnings, never silent partial success.
+* **`app/services/domains/ingestion/application.py`:** Orchestrates ingestion runs; validate parser outputs before persistence; enforce publication candidate constraints before upsert.
+* **`app/services/domains/publications/*`:** Publication list/read-state query layer; include both `pub_url` and `pdf_url` for UI consumption.
+* **`app/services/domains/portability/*`:** Handles JSON import/export for user-scoped scholars and scholar-publication link state while preserving global publication dedup rules.
+* **`app/services/domains/ingestion/scheduler.py`:** Owns automatic runs and continuation queue retries/drops; do not bypass safety gate or cooldown logic.

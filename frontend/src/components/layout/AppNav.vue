@@ -14,6 +14,9 @@ const auth = useAuthStore();
 const runStatus = useRunStatusStore();
 const userSettings = useUserSettingsStore();
 const router = useRouter();
+const emit = defineEmits<{
+  (e: "navigate"): void;
+}>();
 
 const links = computed(() => {
   const base = [
@@ -63,8 +66,13 @@ const showSafetyRow = computed(
 );
 
 async function onLogout(): Promise<void> {
+  emit("navigate");
   await auth.logout();
   await router.replace({ name: "login" });
+}
+
+function onNavigate(): void {
+  emit("navigate");
 }
 </script>
 
@@ -80,6 +88,7 @@ async function onLogout(): Promise<void> {
           :to="link.to"
           class="inline-flex min-h-10 min-w-0 items-center rounded-lg border border-transparent px-3 py-2 text-sm font-medium text-ink-secondary transition hover:border-stroke-interactive hover:bg-surface-card-muted hover:text-ink-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
           active-class="border-stroke-interactive bg-surface-nav-active font-semibold text-ink-primary shadow-sm hover:border-stroke-interactive hover:bg-surface-nav-active hover:text-ink-primary"
+          @click="onNavigate"
         >
           {{ link.label }}
         </RouterLink>
