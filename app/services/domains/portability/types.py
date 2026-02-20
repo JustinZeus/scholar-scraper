@@ -19,6 +19,7 @@ class ImportedPublicationInput:
     venue_text: str | None
     cluster_id: str | None
     pub_url: str | None
+    doi: str | None
     pdf_url: str | None
     fingerprint: str
     is_read: bool

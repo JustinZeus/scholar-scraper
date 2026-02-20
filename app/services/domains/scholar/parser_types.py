@@ -12,6 +12,22 @@ class ParseState(StrEnum):
     NETWORK_ERROR = "network_error"
 
 
+class ScholarParserError(RuntimeError):
+    code: str
+
+    def __init__(self, *, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ScholarDomInvariantError(ScholarParserError):
+    pass
+
+
+class ScholarMalformedDataError(ScholarParserError):
+    pass
+
+
 @dataclass(frozen=True)
 class PublicationCandidate:
     title: str

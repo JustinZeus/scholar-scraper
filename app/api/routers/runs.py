@@ -21,10 +21,10 @@ from app.api.schemas import (
 )
 from app.db.models import RunStatus, RunTriggerType, User
 from app.db.session import get_db_session
-from app.services import ingestion as ingestion_service
-from app.services import run_safety as run_safety_service
-from app.services import runs as run_service
-from app.services import user_settings as user_settings_service
+from app.services.domains.ingestion import application as ingestion_service
+from app.services.domains.ingestion import safety as run_safety_service
+from app.services.domains.runs import application as run_service
+from app.services.domains.settings import application as user_settings_service
 from app.settings import settings
 from app.api.runtime_deps import get_ingestion_service
 
@@ -294,8 +294,226 @@ async def _load_safety_state(
                 "metric_name": "api_runs_safety_cooldown_cleared_total",
                 "metric_value": 1,
             },
-        )
+    )
     return run_safety_service.get_safety_state_payload(user_settings)
+
+
+def _raise_manual_runs_disabled(*, user_id: int, safety_state: dict[str, Any]) -> None:
+    logger.warning(
+        "api.runs.manual_blocked_policy",
+        extra={
+            "event": "api.runs.manual_blocked_policy",
+            "user_id": user_id,
+            "policy": {"manual_run_allowed": False},
+            "safety_state": safety_state,
+            "metric_name": "api_runs_manual_blocked_policy_total",
+            "metric_value": 1,
+        },
+    )
+    raise ApiException(
+        status_code=403,
+        code="manual_runs_disabled",
+        message="Manual checks are disabled by server policy.",
+        details={
+            "policy": {"manual_run_allowed": False},
+            "safety_state": safety_state,
+        },
+    )
+
+
+async def _reused_manual_run_payload(
+    db_session: AsyncSession,
+    *,
+    request: Request,
+    user_id: int,
+    idempotency_key: str | None,
+    safety_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    if idempotency_key is None:
+        return None
+    previous_run = await run_service.get_manual_run_by_idempotency_key(
+        db_session,
+        user_id=user_id,
+        idempotency_key=idempotency_key,
+    )
+    if previous_run is None:
+        return None
+    if previous_run.status == RunStatus.RUNNING:
+        raise ApiException(
+            status_code=409,
+            code="run_in_progress",
+            message="A run with this idempotency key is still in progress.",
+            details={"run_id": int(previous_run.id), "idempotency_key": idempotency_key},
+        )
+    return success_payload(
+        request,
+        data=_manual_run_payload_from_run(
+            previous_run,
+            idempotency_key=idempotency_key,
+            reused_existing_run=True,
+            safety_state=safety_state,
+        ),
+    )
+
+
+async def _run_ingestion_for_manual(
+    db_session: AsyncSession,
+    *,
+    ingest_service: ingestion_service.ScholarIngestionService,
+    user_id: int,
+    idempotency_key: str | None,
+):
+    user_settings = await user_settings_service.get_or_create_settings(
+        db_session,
+        user_id=user_id,
+    )
+    return await ingest_service.run_for_user(
+        db_session,
+        user_id=user_id,
+        trigger_type=RunTriggerType.MANUAL,
+        request_delay_seconds=user_settings.request_delay_seconds,
+        network_error_retries=settings.ingestion_network_error_retries,
+        retry_backoff_seconds=settings.ingestion_retry_backoff_seconds,
+        max_pages_per_scholar=settings.ingestion_max_pages_per_scholar,
+        page_size=settings.ingestion_page_size,
+        auto_queue_continuations=settings.ingestion_continuation_queue_enabled,
+        queue_delay_seconds=settings.ingestion_continuation_base_delay_seconds,
+        idempotency_key=idempotency_key,
+        alert_blocked_failure_threshold=settings.ingestion_alert_blocked_failure_threshold,
+        alert_network_failure_threshold=settings.ingestion_alert_network_failure_threshold,
+        alert_retry_scheduled_threshold=settings.ingestion_alert_retry_scheduled_threshold,
+    )
+
+
+async def _recover_integrity_error(
+    db_session: AsyncSession,
+    *,
+    request: Request,
+    user_id: int,
+    idempotency_key: str | None,
+    original_exc: IntegrityError,
+) -> dict[str, Any]:
+    if idempotency_key is None:
+        logger.exception(
+            "api.runs.manual_integrity_error",
+            extra={"event": "api.runs.manual_integrity_error", "user_id": user_id},
+        )
+        raise ApiException(status_code=500, code="manual_run_failed", message="Manual run failed.") from original_exc
+    existing_run = await run_service.get_manual_run_by_idempotency_key(
+        db_session,
+        user_id=user_id,
+        idempotency_key=idempotency_key,
+    )
+    if existing_run is None:
+        logger.exception(
+            "api.runs.manual_integrity_error",
+            extra={"event": "api.runs.manual_integrity_error", "user_id": user_id},
+        )
+        raise ApiException(status_code=500, code="manual_run_failed", message="Manual run failed.") from original_exc
+    if existing_run.status == RunStatus.RUNNING:
+        raise ApiException(
+            status_code=409,
+            code="run_in_progress",
+            message="A run with this idempotency key is still in progress.",
+            details={"run_id": int(existing_run.id), "idempotency_key": idempotency_key},
+        ) from original_exc
+    return success_payload(
+        request,
+        data=_manual_run_payload_from_run(
+            existing_run,
+            idempotency_key=idempotency_key,
+            reused_existing_run=True,
+            safety_state=await _load_safety_state(db_session, user_id=user_id),
+        ),
+    )
+
+
+async def _execute_manual_run(
+    db_session: AsyncSession,
+    *,
+    request: Request,
+    ingest_service: ingestion_service.ScholarIngestionService,
+    user_id: int,
+    idempotency_key: str | None,
+):
+    try:
+        return await _run_ingestion_for_manual(
+            db_session,
+            ingest_service=ingest_service,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+        )
+    except ingestion_service.RunAlreadyInProgressError as exc:
+        await db_session.rollback()
+        raise ApiException(
+            status_code=409,
+            code="run_in_progress",
+            message="A run is already in progress for this account.",
+        ) from exc
+    except ingestion_service.RunBlockedBySafetyPolicyError as exc:
+        await db_session.rollback()
+        _raise_manual_blocked_safety(exc=exc, user_id=user_id)
+    except IntegrityError as exc:
+        await db_session.rollback()
+        return await _recover_integrity_error(
+            db_session,
+            request=request,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            original_exc=exc,
+        )
+    except Exception as exc:
+        await db_session.rollback()
+        _raise_manual_failed(exc=exc, user_id=user_id)
+
+
+def _raise_manual_blocked_safety(*, exc, user_id: int) -> None:
+    logger.info(
+        "api.runs.manual_blocked_safety",
+        extra={
+            "event": "api.runs.manual_blocked_safety",
+            "user_id": user_id,
+            "reason": exc.safety_state.get("cooldown_reason"),
+            "cooldown_until": exc.safety_state.get("cooldown_until"),
+            "cooldown_remaining_seconds": exc.safety_state.get("cooldown_remaining_seconds"),
+            "metric_name": "api_runs_manual_blocked_safety_total",
+            "metric_value": 1,
+        },
+    )
+    raise ApiException(
+        status_code=429,
+        code=exc.code,
+        message=exc.message,
+        details={"safety_state": exc.safety_state},
+    ) from exc
+
+
+def _raise_manual_failed(*, exc: Exception, user_id: int) -> None:
+    logger.exception(
+        "api.runs.manual_failed",
+        extra={"event": "api.runs.manual_failed", "user_id": user_id},
+    )
+    raise ApiException(status_code=500, code="manual_run_failed", message="Manual run failed.") from exc
+
+
+def _manual_run_success_payload(
+    *,
+    run_summary,
+    idempotency_key: str | None,
+    safety_state: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "run_id": run_summary.crawl_run_id,
+        "status": run_summary.status.value,
+        "scholar_count": run_summary.scholar_count,
+        "succeeded_count": run_summary.succeeded_count,
+        "failed_count": run_summary.failed_count,
+        "partial_count": run_summary.partial_count,
+        "new_publication_count": run_summary.new_publication_count,
+        "reused_existing_run": False,
+        "idempotency_key": idempotency_key,
+        "safety_state": safety_state,
+    }
 
 
 @router.get(
@@ -383,164 +601,28 @@ async def run_manual(
         user_id=current_user.id,
     )
     if not settings.ingestion_manual_run_allowed:
-        logger.warning(
-            "api.runs.manual_blocked_policy",
-            extra={
-                "event": "api.runs.manual_blocked_policy",
-                "user_id": current_user.id,
-                "policy": {"manual_run_allowed": False},
-                "safety_state": safety_state,
-                "metric_name": "api_runs_manual_blocked_policy_total",
-                "metric_value": 1,
-            },
-        )
-        raise ApiException(
-            status_code=403,
-            code="manual_runs_disabled",
-            message="Manual checks are disabled by server policy.",
-            details={
-                "policy": {
-                    "manual_run_allowed": False,
-                },
-                "safety_state": safety_state,
-            },
-        )
+        _raise_manual_runs_disabled(user_id=current_user.id, safety_state=safety_state)
 
     idempotency_key = _normalize_idempotency_key(request.headers.get(IDEMPOTENCY_HEADER))
-    if idempotency_key is not None:
-        previous_run = await run_service.get_manual_run_by_idempotency_key(
-            db_session,
-            user_id=current_user.id,
-            idempotency_key=idempotency_key,
-        )
-        if previous_run is not None:
-            if previous_run.status == RunStatus.RUNNING:
-                raise ApiException(
-                    status_code=409,
-                    code="run_in_progress",
-                    message="A run with this idempotency key is still in progress.",
-                    details={
-                        "run_id": int(previous_run.id),
-                        "idempotency_key": idempotency_key,
-                    },
-                )
-            return success_payload(
-                request,
-                data=_manual_run_payload_from_run(
-                    previous_run,
-                    idempotency_key=idempotency_key,
-                    reused_existing_run=True,
-                    safety_state=safety_state,
-                ),
-            )
-
-    user_settings = await user_settings_service.get_or_create_settings(
+    reused_payload = await _reused_manual_run_payload(
         db_session,
+        request=request,
         user_id=current_user.id,
+        idempotency_key=idempotency_key,
+        safety_state=safety_state,
     )
-    try:
-        run_summary = await ingest_service.run_for_user(
-            db_session,
-            user_id=current_user.id,
-            trigger_type=RunTriggerType.MANUAL,
-            request_delay_seconds=user_settings.request_delay_seconds,
-            network_error_retries=settings.ingestion_network_error_retries,
-            retry_backoff_seconds=settings.ingestion_retry_backoff_seconds,
-            max_pages_per_scholar=settings.ingestion_max_pages_per_scholar,
-            page_size=settings.ingestion_page_size,
-            auto_queue_continuations=settings.ingestion_continuation_queue_enabled,
-            queue_delay_seconds=settings.ingestion_continuation_base_delay_seconds,
-            idempotency_key=idempotency_key,
-            alert_blocked_failure_threshold=settings.ingestion_alert_blocked_failure_threshold,
-            alert_network_failure_threshold=settings.ingestion_alert_network_failure_threshold,
-            alert_retry_scheduled_threshold=settings.ingestion_alert_retry_scheduled_threshold,
-        )
-    except ingestion_service.RunAlreadyInProgressError as exc:
-        await db_session.rollback()
-        raise ApiException(
-            status_code=409,
-            code="run_in_progress",
-            message="A run is already in progress for this account.",
-        ) from exc
-    except ingestion_service.RunBlockedBySafetyPolicyError as exc:
-        await db_session.rollback()
-        logger.info(
-            "api.runs.manual_blocked_safety",
-            extra={
-                "event": "api.runs.manual_blocked_safety",
-                "user_id": current_user.id,
-                "reason": exc.safety_state.get("cooldown_reason"),
-                "cooldown_until": exc.safety_state.get("cooldown_until"),
-                "cooldown_remaining_seconds": exc.safety_state.get("cooldown_remaining_seconds"),
-                "metric_name": "api_runs_manual_blocked_safety_total",
-                "metric_value": 1,
-            },
-        )
-        raise ApiException(
-            status_code=429,
-            code=exc.code,
-            message=exc.message,
-            details={
-                "safety_state": exc.safety_state,
-            },
-        ) from exc
-    except IntegrityError as exc:
-        await db_session.rollback()
-        if idempotency_key is not None:
-            existing_run = await run_service.get_manual_run_by_idempotency_key(
-                db_session,
-                user_id=current_user.id,
-                idempotency_key=idempotency_key,
-            )
-            if existing_run is not None:
-                if existing_run.status == RunStatus.RUNNING:
-                    raise ApiException(
-                        status_code=409,
-                        code="run_in_progress",
-                        message="A run with this idempotency key is still in progress.",
-                        details={
-                            "run_id": int(existing_run.id),
-                            "idempotency_key": idempotency_key,
-                        },
-                    ) from exc
-                return success_payload(
-                    request,
-                    data=_manual_run_payload_from_run(
-                        existing_run,
-                        idempotency_key=idempotency_key,
-                        reused_existing_run=True,
-                        safety_state=await _load_safety_state(
-                            db_session,
-                            user_id=current_user.id,
-                        ),
-                    ),
-                )
-        logger.exception(
-            "api.runs.manual_integrity_error",
-            extra={
-                "event": "api.runs.manual_integrity_error",
-                "user_id": current_user.id,
-            },
-        )
-        raise ApiException(
-            status_code=500,
-            code="manual_run_failed",
-            message="Manual run failed.",
-        ) from exc
-    except Exception as exc:
-        await db_session.rollback()
-        logger.exception(
-            "api.runs.manual_failed",
-            extra={
-                "event": "api.runs.manual_failed",
-                "user_id": current_user.id,
-            },
-        )
-        raise ApiException(
-            status_code=500,
-            code="manual_run_failed",
-            message="Manual run failed.",
-        ) from exc
+    if reused_payload is not None:
+        return reused_payload
+
+    run_summary = await _execute_manual_run(
+        db_session,
+        request=request,
+        ingest_service=ingest_service,
+        user_id=current_user.id,
+        idempotency_key=idempotency_key,
+    )
+    if isinstance(run_summary, dict):
+        return run_summary
 
     current_safety_state = await _load_safety_state(
         db_session,
@@ -548,18 +630,11 @@ async def run_manual(
     )
     return success_payload(
         request,
-        data={
-            "run_id": run_summary.crawl_run_id,
-            "status": run_summary.status.value,
-            "scholar_count": run_summary.scholar_count,
-            "succeeded_count": run_summary.succeeded_count,
-            "failed_count": run_summary.failed_count,
-            "partial_count": run_summary.partial_count,
-            "new_publication_count": run_summary.new_publication_count,
-            "reused_existing_run": False,
-            "idempotency_key": idempotency_key,
-            "safety_state": current_safety_state,
-        },
+        data=_manual_run_success_payload(
+            run_summary=run_summary,
+            idempotency_key=idempotency_key,
+            safety_state=current_safety_state,
+        ),
     )
 
 

@@ -81,7 +81,7 @@ function onNavigate(): void {
     class="min-h-0 min-w-0 overflow-x-hidden border-b border-stroke-subtle bg-surface-nav/70 px-4 py-4 lg:h-full lg:border-b-0 lg:border-r lg:px-5 lg:py-6"
   >
     <div class="flex h-full min-h-0 flex-col gap-4">
-      <nav class="grid grid-cols-2 content-start gap-2 sm:grid-cols-3 lg:grid-cols-1" aria-label="Primary">
+      <nav class="grid grid-cols-1 content-start gap-2" aria-label="Primary">
         <RouterLink
           v-for="link in links"
           :key="link.to"

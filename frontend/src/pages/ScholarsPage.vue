@@ -8,6 +8,7 @@ import AppAlert from "@/components/ui/AppAlert.vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
+import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppInput from "@/components/ui/AppInput.vue";
 import AppModal from "@/components/ui/AppModal.vue";

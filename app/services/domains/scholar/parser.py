@@ -11,14 +11,12 @@ from app.services.domains.scholar.parser_types import (
     ParsedAuthorSearchPage,
     ParsedProfilePage,
     PublicationCandidate,
+    ScholarDomInvariantError,
+    ScholarMalformedDataError,
+    ScholarParserError,
     ScholarSearchCandidate,
 )
 from app.services.domains.scholar.parser_utils import (
-    attr_class,
-    attr_href,
-    attr_src,
-    build_absolute_scholar_url,
-    normalize_space,
     strip_tags,
 )
 from app.services.domains.scholar.profile_rows import (
@@ -44,6 +42,55 @@ from app.services.domains.scholar.state_detection import (
 )
 
 
+def _raise_dom_error(code: str, message: str) -> None:
+    raise ScholarDomInvariantError(code=code, message=message)
+
+
+def _assert_profile_dom_invariants(
+    *,
+    fetch_result: FetchResult,
+    marker_counts: dict[str, int],
+    publications: list[PublicationCandidate],
+    warnings: list[str],
+    has_show_more_button_flag: bool,
+    articles_range: str | None,
+) -> None:
+    if fetch_result.status_code is None:
+        return
+    final_url = (fetch_result.final_url or "").lower()
+    if "accounts.google.com" in final_url or "sorry/index" in final_url:
+        return
+    if any(code.startswith("layout_") for code in warnings):
+        reason = next(code for code in warnings if code.startswith("layout_"))
+        _raise_dom_error(reason, f"Detected layout warning: {reason}")
+    if has_show_more_button_flag and not articles_range:
+        _raise_dom_error(
+            "layout_show_more_without_articles_range",
+            "Show-more control exists without an articles range marker.",
+        )
+    if marker_counts.get("gsc_a_tr", 0) > 0 and marker_counts.get("gsc_a_at", 0) <= 0:
+        _raise_dom_error(
+            "layout_missing_publication_title_anchor",
+            "Publication rows were present but title anchors were absent.",
+        )
+    if not publications:
+        has_profile_markers = marker_counts.get("gsc_prf_in", 0) > 0
+        has_table_markers = marker_counts.get("gsc_a_tr", 0) > 0 or marker_counts.get("gsc_a_at", 0) > 0
+        if not has_profile_markers and not has_table_markers:
+            _raise_dom_error("layout_markers_missing", "Expected scholar profile markers were absent.")
+    for publication in publications:
+        if not publication.title.strip():
+            raise ScholarMalformedDataError(
+                code="malformed_publication_title",
+                message="Encountered a publication candidate with an empty title.",
+            )
+        if publication.citation_count is not None and int(publication.citation_count) < 0:
+            raise ScholarMalformedDataError(
+                code="malformed_publication_negative_citations",
+                message="Encountered a publication candidate with negative citations.",
+            )
+
+
 def parse_profile_page(fetch_result: FetchResult) -> ParsedProfilePage:
     publications, warnings = parse_publications(fetch_result.body)
     marker_counts = count_markers(fetch_result.body)
@@ -59,6 +106,14 @@ def parse_profile_page(fetch_result: FetchResult) -> ParsedProfilePage:
         warnings.append("operation_error_banner_present")
 
     warnings = sorted(set(warnings))
+    _assert_profile_dom_invariants(
+        fetch_result=fetch_result,
+        marker_counts=marker_counts,
+        publications=publications,
+        warnings=warnings,
+        has_show_more_button_flag=show_more,
+        articles_range=articles_range,
+    )
 
     state, state_reason = detect_state(
         fetch_result,

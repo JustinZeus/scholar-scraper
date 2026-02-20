@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
-from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from app.services.domains.scholar.parser_constants import (
     MARKER_KEYS,
-    PROFILE_ROW_DIRECT_LABEL_TOKENS,
-    PROFILE_ROW_PARSER_DIRECT_MARKERS,
     SHOW_MORE_BUTTON_RE,
 )
 from app.services.domains.scholar.parser_types import PublicationCandidate
@@ -26,7 +23,6 @@ class ScholarRowParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.title_href: str | None = None
-        self.direct_download_href: str | None = None
         self.title_parts: list[str] = []
         self.citation_parts: list[str] = []
         self.year_parts: list[str] = []
@@ -35,14 +31,7 @@ class ScholarRowParser(HTMLParser):
         self._title_depth = 0
         self._citation_depth = 0
         self._year_depth = 0
-        self._gray_stack: list[dict[str, Any]] = []
-        self._direct_marker_depth = 0
-        self._aux_link_stack: list[dict[str, Any]] = []
-
-    @staticmethod
-    def _contains_direct_marker(classes: str) -> bool:
-        lowered = classes.lower()
-        return any(marker in lowered for marker in PROFILE_ROW_PARSER_DIRECT_MARKERS)
+        self._gray_stack: list[dict[str, object]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._title_depth > 0:
@@ -53,14 +42,8 @@ class ScholarRowParser(HTMLParser):
             self._year_depth += 1
         if self._gray_stack:
             self._gray_stack[-1]["depth"] += 1
-        if self._direct_marker_depth > 0:
-            self._direct_marker_depth += 1
-        if self._aux_link_stack:
-            self._aux_link_stack[-1]["depth"] += 1
 
         classes = attr_class(attrs)
-        if tag in {"div", "span"} and self._contains_direct_marker(classes):
-            self._direct_marker_depth = 1
 
         if tag == "a" and "gsc_a_at" in classes:
             self._title_depth = 1
@@ -79,17 +62,6 @@ class ScholarRowParser(HTMLParser):
             self._gray_stack.append({"depth": 1, "parts": []})
             return
 
-        if tag == "a":
-            href = attr_href(attrs)
-            self._aux_link_stack.append(
-                {
-                    "depth": 1,
-                    "classes": classes,
-                    "href": href,
-                    "parts": [],
-                }
-            )
-
     def handle_data(self, data: str) -> None:
         if self._title_depth > 0:
             self.title_parts.append(data)
@@ -99,23 +71,6 @@ class ScholarRowParser(HTMLParser):
             self.year_parts.append(data)
         if self._gray_stack:
             self._gray_stack[-1]["parts"].append(data)
-        if self._aux_link_stack:
-            self._aux_link_stack[-1]["parts"].append(data)
-
-    def _capture_direct_download_href(self, link_info: dict[str, Any]) -> None:
-        if self.direct_download_href:
-            return
-        href = link_info.get("href")
-        if not href:
-            return
-        classes = str(link_info.get("classes") or "")
-        label = normalize_space("".join(link_info.get("parts") or [])).lower()
-        if "gs_ggsd" in classes or "gs_ggs" in classes or "gs_ggsa" in classes:
-            self.direct_download_href = href
-            return
-        label_match = any(token in label for token in PROFILE_ROW_DIRECT_LABEL_TOKENS)
-        if self._direct_marker_depth > 0 and label_match:
-            self.direct_download_href = href
 
     def handle_endtag(self, tag: str) -> None:
         if self._title_depth > 0:
@@ -131,13 +86,6 @@ class ScholarRowParser(HTMLParser):
                 if text_value:
                     self.gray_texts.append(text_value)
                 self._gray_stack.pop()
-        if self._aux_link_stack:
-            self._aux_link_stack[-1]["depth"] -= 1
-            if self._aux_link_stack[-1]["depth"] == 0:
-                link_info = self._aux_link_stack.pop()
-                self._capture_direct_download_href(link_info)
-        if self._direct_marker_depth > 0:
-            self._direct_marker_depth -= 1
 
 
 def extract_rows(html: str) -> list[str]:
@@ -223,7 +171,7 @@ def _parse_publication_row(row_html: str) -> tuple[PublicationCandidate | None, 
             citation_count=citation_count,
             authors_text=authors_text,
             venue_text=venue_text,
-            pdf_url=build_absolute_scholar_url(parser.direct_download_href),
+            pdf_url=None,
         ),
         warnings,
     )

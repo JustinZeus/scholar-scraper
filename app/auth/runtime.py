@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.session import clear_session_user, get_session_user, set_session_user
 from app.db.models import User
 from app.security.csrf import CSRF_SESSION_KEY
-from app.services import users as user_service
+from app.services.domains.users import application as user_service
 
 logger = logging.getLogger(__name__)
 

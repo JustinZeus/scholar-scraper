@@ -18,6 +18,7 @@ from app.db.models import AuthorSearchCacheEntry, AuthorSearchRuntimeState, Scho
 from app.services.domains.scholar.parser import (
     ParseState,
     ParsedAuthorSearchPage,
+    ScholarParserError,
     parse_author_search_page,
     parse_profile_page,
 )
@@ -635,7 +636,16 @@ async def _fetch_author_search_with_retries(
     retry_scheduled_count = 0
     for attempt_index in range(max_attempts):
         fetch_result = await source.fetch_author_search_html(normalized_query, start=0)
-        parsed = parse_author_search_page(fetch_result)
+        try:
+            parsed = parse_author_search_page(fetch_result)
+        except ScholarParserError as exc:
+            parsed = ParsedAuthorSearchPage(
+                state=ParseState.LAYOUT_CHANGED,
+                state_reason=exc.code,
+                candidates=[],
+                marker_counts={},
+                warnings=[exc.code],
+            )
         if parsed.state != ParseState.NETWORK_ERROR or attempt_index >= max_attempts - 1:
             break
         retry_warnings.append("network_retry_scheduled_for_author_search")
@@ -873,7 +883,10 @@ async def hydrate_profile_metadata(
     source: ScholarSource,
 ) -> ScholarProfile:
     fetch_result = await source.fetch_profile_html(profile.scholar_id)
-    parsed_page = parse_profile_page(fetch_result)
+    try:
+        parsed_page = parse_profile_page(fetch_result)
+    except ScholarParserError:
+        return profile
 
     if parsed_page.profile_name and not (profile.display_name or "").strip():
         profile.display_name = parsed_page.profile_name

@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.runtime_deps import get_scholar_source
 from app.main import app
-from app.services import user_settings as user_settings_service
-from app.services.scholar_source import FetchResult
+from app.services.domains.settings import application as user_settings_service
+from app.services.domains.scholar.source import FetchResult
 from app.settings import settings
 from tests.integration.helpers import insert_user, login_user
 
@@ -1463,6 +1463,182 @@ async def test_api_publications_list_and_mark_read(db_session: AsyncSession) -> 
     mark_response = client.post("/api/v1/publications/mark-all-read", headers=headers)
     assert mark_response.status_code == 200
     assert mark_response.json()["data"]["updated_count"] == 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_publications_list_schedules_background_enrichment(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-pubs-bg@example.com",
+        password="api-password",
+    )
+    scholar_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            RETURNING id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "background111",
+            "display_name": "Background Scholar",
+        },
+    )
+    scholar_profile_id = int(scholar_result.scalar_one())
+    publication_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 3)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint": f"{(user_id + 17):064x}",
+            "title_raw": "Background Target",
+            "title_normalized": "background target",
+        },
+    )
+    publication_id = int(publication_result.scalar_one())
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read)
+            VALUES (:scholar_profile_id, :publication_id, false)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_profile_id,
+            "publication_id": publication_id,
+        },
+    )
+    await db_session.commit()
+
+    async def _fail_resolver(*args, **kwargs):
+        raise AssertionError("list endpoint should not resolve OA metadata inline")
+
+    async def _fake_schedule(*, user_id: int, request_email: str | None, items, max_items: int):
+        assert user_id > 0
+        assert request_email == "api-pubs-bg@example.com"
+        assert int(max_items) > 0
+        assert any(int(item.publication_id) == publication_id for item in items)
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.domains.publications.listing.resolve_publication_oa_metadata",
+        _fail_resolver,
+    )
+    monkeypatch.setattr(
+        "app.services.domains.publications.application.schedule_missing_pdf_enrichment_for_user",
+        _fake_schedule,
+    )
+
+    client = TestClient(app)
+    login_user(client, email="api-pubs-bg@example.com", password="api-password")
+
+    response = client.get("/api/v1/publications?mode=all")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data["publications"]) == 1
+    assert int(data["publications"][0]["publication_id"]) == publication_id
+    assert data["publications"][0]["pdf_url"] is None
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_publication_retry_pdf_updates_publication(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-pubs-retry@example.com",
+        password="api-password",
+    )
+    scholar_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            RETURNING id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "retryScholar01",
+            "display_name": "Retry Scholar",
+        },
+    )
+    scholar_profile_id = int(scholar_result.scalar_one())
+    publication_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 7)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint": f"{(user_id + 9):064x}",
+            "title_raw": "Retry Target",
+            "title_normalized": "retry target",
+        },
+    )
+    publication_id = int(publication_result.scalar_one())
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read)
+            VALUES (:scholar_profile_id, :publication_id, false)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_profile_id,
+            "publication_id": publication_id,
+        },
+    )
+    await db_session.commit()
+
+    async def _fake_resolver(items, *, request_email=None):
+        assert request_email == "api-pubs-retry@example.com"
+        return {int(items[0].publication_id): ("10.1000/retry-target", "https://oa.example/retry.pdf")}
+
+    monkeypatch.setattr(
+        "app.services.domains.publications.listing.resolve_publication_oa_metadata",
+        _fake_resolver,
+    )
+
+    client = TestClient(app)
+    login_user(client, email="api-pubs-retry@example.com", password="api-password")
+    headers = _api_csrf_headers(client)
+
+    response = client.post(
+        f"/api/v1/publications/{publication_id}/retry-pdf",
+        json={"scholar_profile_id": scholar_profile_id},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["resolved_pdf"] is True
+    assert payload["publication"]["publication_id"] == publication_id
+    assert payload["publication"]["pdf_url"] == "https://oa.example/retry.pdf"
+    assert payload["publication"]["doi"] == "10.1000/retry-target"
+
+    stored = await db_session.execute(
+        text("SELECT doi, pdf_url FROM publications WHERE id = :publication_id"),
+        {"publication_id": publication_id},
+    )
+    stored_doi, stored_pdf_url = stored.one()
+    assert stored_doi == "10.1000/retry-target"
+    assert stored_pdf_url == "https://oa.example/retry.pdf"
 
 
 @pytest.mark.integration

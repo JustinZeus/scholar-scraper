@@ -24,11 +24,53 @@ from app.auth.session import set_session_user
 from app.db.models import User
 from app.db.session import get_db_session
 from app.security.csrf import ensure_csrf_token
-from app.services import users as user_service
+from app.services.domains.users import application as user_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["api-auth"])
+
+
+def _login_limiter_key_and_email(request: Request, payload: LoginRequest) -> tuple[str, str]:
+    return auth_runtime.login_rate_limit_key(request, payload.email), payload.email.strip().lower()
+
+
+def _raise_rate_limited(normalized_email: str, retry_after_seconds: int) -> None:
+    logger.warning(
+        "api.auth.login_rate_limited",
+        extra={
+            "event": "api.auth.login_rate_limited",
+            "email": normalized_email,
+            "retry_after_seconds": retry_after_seconds,
+        },
+    )
+    raise ApiException(
+        status_code=429,
+        code="rate_limited",
+        message="Too many login attempts. Please try again later.",
+        details={"retry_after_seconds": retry_after_seconds},
+    )
+
+
+def _serialize_user_payload(user: User) -> dict[str, object]:
+    return {
+        "id": int(user.id),
+        "email": user.email,
+        "is_admin": bool(user.is_admin),
+        "is_active": bool(user.is_active),
+    }
+
+
+def _raise_invalid_credentials(*, normalized_email: str) -> None:
+    logger.info(
+        "api.auth.login_failed",
+        extra={"event": "api.auth.login_failed", "email": normalized_email},
+    )
+    raise ApiException(
+        status_code=401,
+        code="invalid_credentials",
+        message="Invalid email or password.",
+    )
 
 
 @router.post(
@@ -42,24 +84,10 @@ async def login(
     auth_service: AuthService = Depends(get_auth_service),
     rate_limiter: SlidingWindowRateLimiter = Depends(get_login_rate_limiter),
 ):
-    limiter_key = auth_runtime.login_rate_limit_key(request, payload.email)
+    limiter_key, normalized_email = _login_limiter_key_and_email(request, payload)
     decision = rate_limiter.check(limiter_key)
-    normalized_email = payload.email.strip().lower()
     if not decision.allowed:
-        logger.warning(
-            "api.auth.login_rate_limited",
-            extra={
-                "event": "api.auth.login_rate_limited",
-                "email": normalized_email,
-                "retry_after_seconds": decision.retry_after_seconds,
-            },
-        )
-        raise ApiException(
-            status_code=429,
-            code="rate_limited",
-            message="Too many login attempts. Please try again later.",
-            details={"retry_after_seconds": decision.retry_after_seconds},
-        )
+        _raise_rate_limited(normalized_email, int(decision.retry_after_seconds))
 
     user = await auth_service.authenticate_user(
         db_session,
@@ -68,18 +96,7 @@ async def login(
     )
     if user is None:
         rate_limiter.record_failure(limiter_key)
-        logger.info(
-            "api.auth.login_failed",
-            extra={
-                "event": "api.auth.login_failed",
-                "email": normalized_email,
-            },
-        )
-        raise ApiException(
-            status_code=401,
-            code="invalid_credentials",
-            message="Invalid email or password.",
-        )
+        _raise_invalid_credentials(normalized_email=normalized_email)
 
     rate_limiter.reset(limiter_key)
     set_session_user(
@@ -101,12 +118,7 @@ async def login(
         data={
             "authenticated": True,
             "csrf_token": ensure_csrf_token(request),
-            "user": {
-                "id": int(user.id),
-                "email": user.email,
-                "is_admin": bool(user.is_admin),
-                "is_active": bool(user.is_active),
-            },
+            "user": _serialize_user_payload(user),
         },
     )
 
@@ -124,12 +136,7 @@ async def get_current_session(
         data={
             "authenticated": True,
             "csrf_token": ensure_csrf_token(request),
-            "user": {
-                "id": int(current_user.id),
-                "email": current_user.email,
-                "is_admin": bool(current_user.is_admin),
-                "is_active": bool(current_user.is_active),
-            },
+            "user": _serialize_user_payload(current_user),
         },
     )
 

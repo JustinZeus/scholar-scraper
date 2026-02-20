@@ -54,6 +54,7 @@ export interface PublicationExportItem {
   author_text: string | null;
   venue_text: string | null;
   pub_url: string | null;
+  doi: string | null;
   pdf_url: string | null;
   is_read: boolean;
 }

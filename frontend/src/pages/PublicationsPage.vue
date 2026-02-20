@@ -16,6 +16,7 @@ import {
   listPublications,
   markAllRead,
   markSelectedRead,
+  retryPublicationPdf,
   type PublicationItem,
   type PublicationMode,
   type PublicationsResult,
@@ -37,6 +38,7 @@ const sortDirection = ref<"asc" | "desc">("desc");
 const scholars = ref<ScholarProfile[]>([]);
 const listState = ref<PublicationsResult | null>(null);
 const selectedPublicationKeys = ref<Set<string>>(new Set());
+const retryingPublicationKeys = ref<Set<string>>(new Set());
 
 const errorMessage = ref<string | null>(null);
 const errorRequestId = ref<string | null>(null);
@@ -101,6 +103,13 @@ function scholarLabel(item: ScholarProfile): string {
 
 function publicationPrimaryUrl(item: PublicationItem): string | null {
   return item.pub_url || item.pdf_url;
+}
+
+function publicationDoiUrl(item: PublicationItem): string | null {
+  if (!item.doi) {
+    return null;
+  }
+  return `https://doi.org/${item.doi}`;
 }
 
 const selectedScholarName = computed(() => {
@@ -324,6 +333,49 @@ function onToggleRowSelection(item: PublicationItem, event: Event): void {
   selectedPublicationKeys.value = next;
 }
 
+function isRetryingPublication(item: PublicationItem): boolean {
+  return retryingPublicationKeys.value.has(publicationKey(item));
+}
+
+function replacePublication(updated: PublicationItem): void {
+  if (!listState.value) {
+    return;
+  }
+  listState.value.publications = listState.value.publications.map((item) =>
+    publicationKey(item) === publicationKey(updated) ? updated : item,
+  );
+}
+
+async function onRetryPdf(item: PublicationItem): Promise<void> {
+  if (item.pdf_url) {
+    return;
+  }
+  const key = publicationKey(item);
+  const next = new Set(retryingPublicationKeys.value);
+  next.add(key);
+  retryingPublicationKeys.value = next;
+  errorMessage.value = null;
+  errorRequestId.value = null;
+  successMessage.value = null;
+
+  try {
+    const response = await retryPublicationPdf(item.publication_id, item.scholar_profile_id);
+    replacePublication(response.publication);
+    successMessage.value = response.message;
+  } catch (error) {
+    if (error instanceof ApiRequestError) {
+      errorMessage.value = error.message;
+      errorRequestId.value = error.requestId;
+    } else {
+      errorMessage.value = "Unable to retry PDF lookup for this publication.";
+    }
+  } finally {
+    const cleared = new Set(retryingPublicationKeys.value);
+    cleared.delete(key);
+    retryingPublicationKeys.value = cleared;
+  }
+}
+
 async function onMarkSelectedRead(): Promise<void> {
   if (selectedPublicationKeys.value.size === 0 || !listState.value) {
     return;
@@ -404,19 +456,19 @@ watch(
 <template>
   <AppPage
     title="Publications"
-    subtitle="Filter discovered publications, then mark what you have read so upcoming checks stay focused."
+    subtitle="Review discoveries, open PDFs, and keep read state current."
   >
     <AppCard class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="space-y-1">
           <div class="flex items-center gap-1">
-            <h2 class="text-lg font-semibold text-ink-primary">What you can do here</h2>
+            <h2 class="text-lg font-semibold text-ink-primary">Publications workspace</h2>
             <AppHelpHint
-              text="Publications are records discovered from tracked scholar profiles. Unread mode focuses only on items you have not marked as read."
+              text="Use this workspace to filter discoveries, open OA PDF links, and mark reviewed papers as read so future checks stay focused."
             />
           </div>
           <p class="text-sm text-secondary">
-            Select a scholar or scope, search within results, and mark items as read when you are done.
+            Choose scope, triage results, and update read state in one place.
           </p>
         </div>
 
@@ -427,7 +479,10 @@ watch(
 
       <div class="grid gap-3 xl:grid-cols-[minmax(0,15rem)_minmax(0,18rem)_minmax(0,1fr)] xl:items-end">
         <div class="grid gap-1 text-xs text-secondary">
-          <span>View mode</span>
+          <div class="flex items-center gap-1">
+            <span>View mode</span>
+            <AppHelpHint text="Unread shows only unreviewed records; All records includes the full publication history." />
+          </div>
           <div class="flex min-h-10 flex-wrap items-center gap-2">
             <AppButton
               :variant="mode === 'unread' ? 'primary' : 'secondary'"
@@ -449,7 +504,10 @@ watch(
         </div>
 
         <label class="grid gap-1 text-xs text-secondary" for="publications-scholar-filter">
-          <span>Scholar</span>
+          <span class="inline-flex items-center gap-1">
+            Scholar
+            <AppHelpHint text="Filter results to one tracked scholar profile. The selected scholar is synced to the URL query." />
+          </span>
           <AppSelect
             id="publications-scholar-filter"
             v-model="selectedScholarFilter"
@@ -464,7 +522,10 @@ watch(
         </label>
 
         <label class="grid gap-1 text-xs text-secondary" for="publications-search-input">
-          <span>Search within current scope</span>
+          <span class="inline-flex items-center gap-1">
+            Search current results
+            <AppHelpHint text="Search matches title, scholar, venue, and year within the currently loaded scope." />
+          </span>
           <div class="flex min-w-0 items-center gap-2">
             <AppInput
               id="publications-search-input"
@@ -506,134 +567,155 @@ watch(
           </AppButton>
         </div>
       </div>
-    </AppCard>
 
-    <RequestStateAlerts
-      :success-message="successMessage"
-      success-title="Publication update complete"
-      :error-message="errorMessage"
-      :error-request-id="errorRequestId"
-      error-title="Publication request failed"
-      @dismiss-success="successMessage = null"
-    />
+      <RequestStateAlerts
+        :success-message="successMessage"
+        success-title="Publication update complete"
+        :error-message="errorMessage"
+        :error-request-id="errorRequestId"
+        error-title="Publication request failed"
+        @dismiss-success="successMessage = null"
+      />
 
-    <AppCard class="space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-1">
-          <h2 class="text-lg font-semibold text-ink-primary">Publication List</h2>
-          <AppHelpHint
-            text="Use sorting, search, and bulk actions here to move discovered records from unread into read history."
-          />
+      <section class="space-y-3 border-t border-stroke-default pt-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-1">
+            <h3 class="text-base font-semibold text-ink-primary">Results</h3>
+            <AppHelpHint
+              text="Sort columns to prioritize review. PDF opens a resolved open-access link, while retry triggers a new lookup for that row."
+            />
+          </div>
+          <span class="text-xs text-secondary">Currently showing {{ selectedScholarName }}</span>
         </div>
-        <span class="text-xs text-secondary">Currently showing {{ selectedScholarName }}</span>
-      </div>
 
-      <AsyncStateGate
-        :loading="loading"
-        :loading-lines="8"
-        :empty="showingEmptyList"
-        :empty-title="emptyTitle"
-        :empty-body="emptyBody"
-        :show-empty="!errorMessage"
-      >
-        <AppTable v-if="listState" label="Publication list table">
-          <thead>
-            <tr>
-              <th scope="col" class="w-12">
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
-                  :checked="allVisibleUnreadSelected"
-                  :disabled="visibleUnreadKeys.size === 0"
-                  aria-label="Select all visible unread publications"
-                  @change="onToggleAllVisible"
-                />
-              </th>
-              <th scope="col">
-                <button type="button" class="table-sort" @click="toggleSort('title')">
-                  Title <span aria-hidden="true">{{ sortMarker("title") }}</span>
-                </button>
-              </th>
-              <th scope="col">
-                <button type="button" class="table-sort" @click="toggleSort('scholar')">
-                  Scholar <span aria-hidden="true">{{ sortMarker("scholar") }}</span>
-                </button>
-              </th>
-              <th scope="col">
-                <button type="button" class="table-sort" @click="toggleSort('year')">
-                  Year <span aria-hidden="true">{{ sortMarker("year") }}</span>
-                </button>
-              </th>
-              <th scope="col">
-                <button type="button" class="table-sort" @click="toggleSort('citations')">
-                  Citations <span aria-hidden="true">{{ sortMarker("citations") }}</span>
-                </button>
-              </th>
-              <th scope="col">
-                <button type="button" class="table-sort" @click="toggleSort('status')">
-                  Read status <span aria-hidden="true">{{ sortMarker("status") }}</span>
-                </button>
-              </th>
-              <th scope="col">
-                <button type="button" class="table-sort" @click="toggleSort('first_seen')">
-                  First seen <span aria-hidden="true">{{ sortMarker("first_seen") }}</span>
-                </button>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in sortedPublications" :key="publicationKey(item)">
-              <td>
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
-                  :checked="selectedPublicationKeys.has(publicationKey(item))"
-                  :disabled="item.is_read"
-                  :aria-label="`Select publication ${item.title}`"
-                  @change="onToggleRowSelection(item, $event)"
-                />
-              </td>
-              <td>
-                <div class="grid gap-1">
-                  <a
-                    v-if="publicationPrimaryUrl(item)"
-                    :href="publicationPrimaryUrl(item) || ''"
-                    target="_blank"
-                    rel="noreferrer"
-                    class="link-inline"
-                  >
-                    {{ item.title }}
-                  </a>
-                  <span v-else>{{ item.title }}</span>
+        <AsyncStateGate
+          :loading="loading"
+          :loading-lines="8"
+          :empty="showingEmptyList"
+          :empty-title="emptyTitle"
+          :empty-body="emptyBody"
+          :show-empty="!errorMessage"
+        >
+          <AppTable v-if="listState" label="Publication list table">
+            <thead>
+              <tr>
+                <th scope="col" class="w-12">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
+                    :checked="allVisibleUnreadSelected"
+                    :disabled="visibleUnreadKeys.size === 0"
+                    aria-label="Select all visible unread publications"
+                    @change="onToggleAllVisible"
+                  />
+                </th>
+                <th scope="col">
+                  <button type="button" class="table-sort" @click="toggleSort('title')">
+                    Title <span aria-hidden="true">{{ sortMarker("title") }}</span>
+                  </button>
+                </th>
+                <th scope="col">
+                  <button type="button" class="table-sort" @click="toggleSort('scholar')">
+                    Scholar <span aria-hidden="true">{{ sortMarker("scholar") }}</span>
+                  </button>
+                </th>
+                <th scope="col">PDF</th>
+                <th scope="col">
+                  <button type="button" class="table-sort" @click="toggleSort('year')">
+                    Year <span aria-hidden="true">{{ sortMarker("year") }}</span>
+                  </button>
+                </th>
+                <th scope="col">
+                  <button type="button" class="table-sort" @click="toggleSort('citations')">
+                    Citations <span aria-hidden="true">{{ sortMarker("citations") }}</span>
+                  </button>
+                </th>
+                <th scope="col">
+                  <button type="button" class="table-sort" @click="toggleSort('status')">
+                    Read status <span aria-hidden="true">{{ sortMarker("status") }}</span>
+                  </button>
+                </th>
+                <th scope="col">
+                  <button type="button" class="table-sort" @click="toggleSort('first_seen')">
+                    First seen <span aria-hidden="true">{{ sortMarker("first_seen") }}</span>
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in sortedPublications" :key="publicationKey(item)">
+                <td>
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
+                    :checked="selectedPublicationKeys.has(publicationKey(item))"
+                    :disabled="item.is_read"
+                    :aria-label="`Select publication ${item.title}`"
+                    @change="onToggleRowSelection(item, $event)"
+                  />
+                </td>
+                <td>
+                  <div class="grid gap-1">
+                    <a
+                      v-if="publicationPrimaryUrl(item)"
+                      :href="publicationPrimaryUrl(item) || ''"
+                      target="_blank"
+                      rel="noreferrer"
+                      class="link-inline"
+                    >
+                      {{ item.title }}
+                    </a>
+                    <span v-else>{{ item.title }}</span>
+                    <a
+                      v-if="publicationDoiUrl(item)"
+                      :href="publicationDoiUrl(item) || ''"
+                      target="_blank"
+                      rel="noreferrer"
+                      class="link-inline text-xs"
+                    >
+                      DOI: {{ item.doi }}
+                    </a>
+                  </div>
+                </td>
+                <td>{{ item.scholar_label }}</td>
+                <td>
                   <a
                     v-if="item.pdf_url"
                     :href="item.pdf_url"
                     target="_blank"
                     rel="noreferrer"
-                    class="link-inline text-xs"
+                    class="pdf-link-button"
                   >
-                    Direct PDF
+                    PDF
                   </a>
-                </div>
-              </td>
-              <td>{{ item.scholar_label }}</td>
-              <td>{{ item.year ?? "n/a" }}</td>
-              <td>{{ item.citation_count }}</td>
-              <td>
-                <div class="flex flex-wrap items-center gap-2">
-                  <AppBadge :tone="item.is_new_in_latest_run ? 'info' : 'neutral'">
-                    {{ item.is_new_in_latest_run ? "New" : "Seen before" }}
-                  </AppBadge>
-                  <AppBadge :tone="item.is_read ? 'success' : 'warning'">
-                    {{ item.is_read ? "Read" : "Unread" }}
-                  </AppBadge>
-                </div>
-              </td>
-              <td>{{ formatDate(item.first_seen_at) }}</td>
-            </tr>
-          </tbody>
-        </AppTable>
-      </AsyncStateGate>
+                  <button
+                    v-else
+                    type="button"
+                    class="pdf-retry-button"
+                    :disabled="isRetryingPublication(item)"
+                    @click="onRetryPdf(item)"
+                  >
+                    {{ isRetryingPublication(item) ? "..." : "retry" }}
+                  </button>
+                </td>
+                <td>{{ item.year ?? "n/a" }}</td>
+                <td>{{ item.citation_count }}</td>
+                <td>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <AppBadge :tone="item.is_new_in_latest_run ? 'info' : 'neutral'">
+                      {{ item.is_new_in_latest_run ? "New" : "Seen before" }}
+                    </AppBadge>
+                    <AppBadge :tone="item.is_read ? 'success' : 'warning'">
+                      {{ item.is_read ? "Read" : "Unread" }}
+                    </AppBadge>
+                  </div>
+                </td>
+                <td>{{ formatDate(item.first_seen_at) }}</td>
+              </tr>
+            </tbody>
+          </AppTable>
+        </AsyncStateGate>
+      </section>
     </AppCard>
   </AppPage>
 </template>
@@ -641,5 +723,13 @@ watch(
 <style scoped>
 .table-sort {
   @apply inline-flex items-center gap-1 text-left font-semibold text-ink-primary transition hover:text-ink-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset;
+}
+
+.pdf-link-button {
+  @apply inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium border-state-success-border bg-state-success-bg text-state-success-text shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset;
+}
+
+.pdf-retry-button {
+  @apply inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium border-state-warning-border bg-state-warning-bg text-state-warning-text transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset disabled:cursor-not-allowed disabled:opacity-50;
 }
 </style>

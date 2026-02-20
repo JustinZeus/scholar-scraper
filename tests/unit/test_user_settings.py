@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.user_settings import (
+from app.services.domains.settings.application import (
     DEFAULT_NAV_VISIBLE_PAGES,
     HARD_MIN_REQUEST_DELAY_SECONDS,
     HARD_MIN_RUN_INTERVAL_MINUTES,

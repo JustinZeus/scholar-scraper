@@ -1,4 +1,4 @@
-from app.services.scholar_source import _build_profile_url
+from app.services.domains.scholar.source import _build_profile_url
 
 
 def test_build_profile_url_includes_pagesize_for_initial_page() -> None:

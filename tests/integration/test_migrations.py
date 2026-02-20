@@ -16,7 +16,7 @@ EXPECTED_TABLES = {
 }
 
 EXPECTED_ENUMS = {"run_status", "run_trigger_type"}
-EXPECTED_REVISION = "20260219_0010"
+EXPECTED_REVISION = "20260220_0011"
 
 
 @pytest.mark.integration
