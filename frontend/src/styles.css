@@ -137,7 +137,7 @@
   }
 
   body {
-    @apply overflow-hidden bg-surface-app text-ink-primary antialiased transition-colors duration-300;
+    @apply overflow-x-hidden overflow-y-auto bg-surface-app text-ink-primary antialiased transition-colors duration-300 lg:overflow-hidden;
   }
 
   h1,

@@ -36,7 +36,7 @@ watch(showChrome, (value) => {
 </script>
 
 <template>
-  <div class="h-[100dvh] max-h-[100dvh] w-full max-w-full overflow-hidden">
+  <div class="min-h-[100dvh] w-full max-w-full overflow-visible lg:h-[100dvh] lg:max-h-[100dvh] lg:overflow-hidden">
     <a href="#app-main" class="skip-link">Skip to main content</a>
     <RequestErrorPanel />
 
@@ -46,9 +46,7 @@ watch(showChrome, (value) => {
         :menu-open="isMobileNavOpen"
         @toggle-menu="toggleMobileNav"
       />
-      <div
-        class="relative h-[calc(100dvh-4.5rem)] min-h-0 lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-1"
-      >
+      <div class="relative min-h-0 lg:grid lg:h-[calc(100dvh-4.5rem)] lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-1">
         <button
           v-if="isMobileNavOpen"
           type="button"
@@ -68,8 +66,8 @@ watch(showChrome, (value) => {
         </div>
         <main
           id="app-main"
-          class="min-h-0 min-w-0 overflow-x-hidden px-4 py-6 sm:px-6 lg:col-start-2 lg:px-8"
-          :class="shouldLockMainScroll ? 'overflow-y-auto lg:overflow-y-hidden' : 'overflow-y-auto'"
+          class="min-h-0 min-w-0 overflow-x-hidden overflow-y-visible px-4 py-6 sm:px-6 lg:col-start-2 lg:overflow-y-auto lg:px-8"
+          :class="shouldLockMainScroll ? 'lg:overflow-y-hidden' : ''"
         >
           <RouterView />
         </main>
@@ -79,7 +77,7 @@ watch(showChrome, (value) => {
     <main
       id="app-main"
       v-else
-      class="h-[100dvh] max-h-[100dvh] min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+      class="min-h-[100dvh] min-w-0 overflow-x-hidden overflow-y-visible lg:h-[100dvh] lg:max-h-[100dvh] lg:overflow-y-auto"
     >
       <RouterView />
     </main>
