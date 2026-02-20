@@ -52,7 +52,7 @@ watch(showChrome, (value) => {
         <button
           v-if="isMobileNavOpen"
           type="button"
-          class="absolute inset-0 z-30 bg-black/35 backdrop-blur-[1px] lg:hidden"
+          class="absolute inset-0 z-30 bg-surface-overlay/35 backdrop-blur-[1px] lg:hidden"
           aria-label="Close navigation menu"
           @click="closeMobileNav"
         />
