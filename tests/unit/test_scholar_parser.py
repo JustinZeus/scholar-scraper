@@ -97,8 +97,42 @@ def test_parse_profile_page_handles_missing_optional_metadata() -> None:
     assert parsed.state_reason == "publications_extracted"
     assert len(parsed.publications) == 1
     publication = parsed.publications[0]
+    assert publication.cluster_id == "cfv:abc:def123"
     assert publication.year is None
     assert publication.venue_text is None
+
+
+def test_parse_profile_page_parses_comma_formatted_citation_counts() -> None:
+    html = """
+    <html>
+      <div id="gsc_prf_in">Citation Formatting Test</div>
+      <span id="gsc_a_nn">Articles 1-1</span>
+      <table>
+        <tbody id="gsc_a_b">
+          <tr class="gsc_a_tr">
+            <td class="gsc_a_t">
+              <a class="gsc_a_at" href="/citations?view_op=view_citation&citation_for_view=abc:def123">Paper</a>
+            </td>
+            <td class="gsc_a_c"><a class="gsc_a_ac">Cited by 1,234</a></td>
+            <td class="gsc_a_y"><span class="gsc_a_h">2024</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </html>
+    """
+    fetch_result = FetchResult(
+        requested_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+        status_code=200,
+        final_url="https://scholar.google.com/citations?hl=en&user=abcDEF123456",
+        body=html,
+        error=None,
+    )
+
+    parsed = parse_profile_page(fetch_result)
+
+    assert parsed.state == ParseState.OK
+    assert len(parsed.publications) == 1
+    assert parsed.publications[0].citation_count == 1234
 
 
 def test_parse_profile_page_ignores_direct_pdf_link_markup() -> None:

@@ -106,15 +106,13 @@ def parse_cluster_id_from_href(href: str | None) -> str | None:
     if citation_for_view:
         token = citation_for_view[0].strip()
         if token:
-            if ":" in token:
-                return token.rsplit(":", 1)[-1] or None
-            return token
+            return f"cfv:{token}"
 
     cluster = query.get("cluster")
     if cluster:
         token = cluster[0].strip()
         if token:
-            return token
+            return f"cluster:{token}"
     return None
 
 
@@ -133,10 +131,10 @@ def parse_citation_count(parts: list[str]) -> int | None:
     text = normalize_space(" ".join(parts))
     if not text:
         return 0
-    match = re.search(r"\d+", text)
-    if not match:
+    digits = re.sub(r"\D+", "", text)
+    if not digits:
         return None
-    return int(match.group(0))
+    return int(digits)
 
 
 def _parse_publication_row(row_html: str) -> tuple[PublicationCandidate | None, list[str]]:
