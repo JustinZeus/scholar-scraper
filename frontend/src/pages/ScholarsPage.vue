@@ -861,7 +861,7 @@ onMounted(() => {
                 body="Clear or adjust the filter to see tracked scholars."
               />
 
-              <div v-else class="space-y-3 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:space-y-0">
+              <div v-else class="space-y-3 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:space-y-0 xl:overflow-hidden">
                 <ul class="grid gap-3 lg:hidden">
                   <li
                     v-for="item in visibleScholars"
@@ -888,8 +888,8 @@ onMounted(() => {
                   </li>
                 </ul>
 
-                <div class="hidden min-h-0 flex-1 lg:block">
-                  <AppTable class="max-h-full overflow-y-auto" label="Tracked scholars table">
+                <div class="hidden min-h-0 flex-1 overflow-hidden lg:block">
+                  <AppTable class="h-full overflow-y-scroll overscroll-contain" label="Tracked scholars table">
                     <thead>
                       <tr>
                         <th scope="col">Scholar</th>
