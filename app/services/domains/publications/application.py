@@ -8,7 +8,6 @@ from app.services.domains.publications.counts import (
 )
 from app.services.domains.publications.listing import (
     list_for_user,
-    list_new_for_latest_run_for_user,
     retry_pdf_for_user,
     list_unread_for_user,
 )
@@ -22,7 +21,6 @@ from app.services.domains.publications.modes import (
     MODE_LATEST,
     MODE_NEW,
     MODE_UNREAD,
-    resolve_mode,
     resolve_publication_view_mode,
 )
 from app.services.domains.publications.queries import (
@@ -52,13 +50,11 @@ __all__ = [
     "PublicationListItem",
     "UnreadPublicationItem",
     "resolve_publication_view_mode",
-    "resolve_mode",
     "get_latest_completed_run_id_for_user",
     "publications_query",
     "get_publication_item_for_user",
     "list_for_user",
     "list_unread_for_user",
-    "list_new_for_latest_run_for_user",
     "retry_pdf_for_user",
     "hydrate_pdf_enrichment_state",
     "schedule_retry_pdf_enrichment_for_row",

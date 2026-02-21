@@ -344,11 +344,6 @@ def _author_search_cooldown_remaining_seconds(
     return max(0, remaining_seconds)
 
 
-def _reset_author_search_runtime_state_for_tests() -> None:
-    # Runtime state now lives in the database; tests should reset via DB fixtures.
-    return None
-
-
 async def list_scholars_for_user(
     db_session: AsyncSession,
     *,

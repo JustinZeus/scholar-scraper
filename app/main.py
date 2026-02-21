@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.errors import register_api_exception_handlers
+from app.api.media import router as media_router
 from app.api.router import router as api_router
 from app.api.runtime_deps import get_ingestion_service, get_scholar_source
 from app.db.session import check_database
@@ -106,6 +107,7 @@ app.add_middleware(
     strict_transport_security_preload=settings.security_strict_transport_security_preload,
 )
 app.include_router(api_router)
+app.include_router(media_router)
 
 
 @app.get("/healthz")

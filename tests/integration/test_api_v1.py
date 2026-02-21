@@ -777,9 +777,9 @@ async def test_api_scholars_search_and_profile_image_management(
         assert upload_response.status_code == 200
         upload_data = upload_response.json()["data"]
         assert upload_data["profile_image_source"] == "upload"
-        assert upload_data["profile_image_url"] == f"/api/v1/scholars/{scholar_profile_id}/image/upload"
+        assert upload_data["profile_image_url"] == f"/scholar-images/{scholar_profile_id}/upload"
 
-        uploaded_image_response = client.get(f"/api/v1/scholars/{scholar_profile_id}/image/upload")
+        uploaded_image_response = client.get(f"/scholar-images/{scholar_profile_id}/upload")
         assert uploaded_image_response.status_code == 200
         assert uploaded_image_response.headers["content-type"].startswith("image/png")
         assert uploaded_image_response.content == uploaded_bytes

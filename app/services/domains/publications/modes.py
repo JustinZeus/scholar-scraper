@@ -12,7 +12,3 @@ def resolve_publication_view_mode(value: str | None) -> str:
     if value in {MODE_LATEST, MODE_NEW}:
         return MODE_LATEST
     return MODE_ALL
-
-
-def resolve_mode(value: str | None) -> str:
-    return resolve_publication_view_mode(value)

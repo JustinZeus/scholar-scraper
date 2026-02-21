@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.domains.publications.modes import (
     MODE_ALL,
-    MODE_LATEST,
     MODE_UNREAD,
     resolve_publication_view_mode,
 )
@@ -81,34 +80,3 @@ async def list_unread_for_user(
         )
     )
     return [unread_item_from_row(row) for row in result.all()]
-
-
-async def list_new_for_latest_run_for_user(
-    db_session: AsyncSession,
-    *,
-    user_id: int,
-    limit: int = 100,
-) -> list[UnreadPublicationItem]:
-    rows = await list_for_user(
-        db_session,
-        user_id=user_id,
-        mode=MODE_LATEST,
-        scholar_profile_id=None,
-        limit=limit,
-    )
-    return [_to_unread_item(row) for row in rows]
-
-
-def _to_unread_item(row: PublicationListItem) -> UnreadPublicationItem:
-    return UnreadPublicationItem(
-        publication_id=row.publication_id,
-        scholar_profile_id=row.scholar_profile_id,
-        scholar_label=row.scholar_label,
-        title=row.title,
-        year=row.year,
-        citation_count=row.citation_count,
-        venue_text=row.venue_text,
-        pub_url=row.pub_url,
-        doi=row.doi,
-        pdf_url=row.pdf_url,
-    )

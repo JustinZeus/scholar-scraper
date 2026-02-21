@@ -9,6 +9,8 @@ All API responses under `/api/v1` use one of these envelopes:
 
 `meta.request_id` must be present for success and error responses.
 
+Binary media assets are served outside `/api/v1` (for example, `GET /scholar-images/{scholar_profile_id}/upload`).
+
 ## Publications Semantics
 
 - `GET /api/v1/publications` supports `mode=all|unread|latest`.

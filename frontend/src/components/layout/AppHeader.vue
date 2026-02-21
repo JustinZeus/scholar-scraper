@@ -60,7 +60,7 @@ function onToggleMenu(): void {
           to="/dashboard"
           class="inline-flex items-center gap-2.5 rounded-sm font-display text-xl tracking-tight text-ink-primary transition hover:text-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
         >
-          <AppBrandMark size="lg" />
+          <AppBrandMark size="xl" />
           <span>scholarr</span>
         </RouterLink>
       </div>

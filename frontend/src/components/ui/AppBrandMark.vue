@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import brandLogo from "@/logo.png";
-
 const props = withDefaults(
   defineProps<{
     size?: "sm" | "md" | "lg" | "xl";
@@ -26,7 +24,7 @@ const sizeClass = computed(() => {
 });
 
 const logoMaskStyle: Record<string, string> = {
-  "--brand-logo-mask": `url(${brandLogo})`,
+  "--brand-logo-mask": "url(/scholar_logo.png)",
 };
 </script>
 
