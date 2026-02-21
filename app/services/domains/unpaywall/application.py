@@ -1,19 +1,42 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import re
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
 from app.services.domains.crossref.application import discover_doi_for_publication
-from app.services.domains.publications.types import PublicationListItem, UnreadPublicationItem
 from app.services.domains.doi.normalize import normalize_doi
+from app.services.domains.unpaywall.pdf_discovery import (
+    looks_like_pdf_url,
+    resolve_pdf_from_landing_page,
+)
+from app.services.domains.unpaywall.rate_limit import wait_for_unpaywall_slot
 from app.settings import settings
+
+if TYPE_CHECKING:
+    from app.services.domains.publications.types import PublicationListItem, UnreadPublicationItem
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.I)
 DOI_PREFIX_RE = re.compile(r"\bdoi\s*[:=]\s*(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", re.I)
 DOI_URL_RE = re.compile(r"(?:https?://)?(?:dx\.)?doi\.org/(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", re.I)
 UNPAYWALL_URL_TEMPLATE = "https://api.unpaywall.org/v2/{doi}"
+FAILURE_MISSING_DOI = "missing_doi"
+FAILURE_NO_RECORD = "no_unpaywall_record"
+FAILURE_NO_PDF = "no_pdf_found"
+FAILURE_RESOLUTION_EXCEPTION = "resolution_exception"
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class OaResolutionOutcome:
+    publication_id: int
+    doi: str | None
+    pdf_url: str | None
+    failure_reason: str | None
+    source: str | None
+    used_crossref: bool
 
 
 def _extract_doi_candidate(text: str | None) -> str | None:
@@ -57,21 +80,89 @@ def _publication_doi(item: PublicationListItem | UnreadPublicationItem) -> str |
     )
 
 
-def _payload_pdf_url(payload: dict) -> str | None:
+def _payload_locations(payload: dict) -> list[dict]:
+    locations: list[dict] = []
     best = payload.get("best_oa_location")
     if isinstance(best, dict):
-        pdf_url = best.get("url_for_pdf")
-        if isinstance(pdf_url, str) and pdf_url.strip():
-            return pdf_url.strip()
-    locations = payload.get("oa_locations")
-    if not isinstance(locations, list):
+        locations.append(best)
+    oa_locations = payload.get("oa_locations")
+    if isinstance(oa_locations, list):
+        locations.extend(location for location in oa_locations if isinstance(location, dict))
+    return locations
+
+
+def _location_value(location: dict, key: str) -> str | None:
+    value = location.get(key)
+    if not isinstance(value, str):
         return None
-    for location in locations:
-        if not isinstance(location, dict):
+    normalized = value.strip()
+    return normalized or None
+
+
+def _payload_pdf_candidates(payload: dict) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for location in _payload_locations(payload):
+        candidate = _location_value(location, "url_for_pdf")
+        if candidate is None or candidate in seen:
             continue
-        pdf_url = location.get("url_for_pdf")
-        if isinstance(pdf_url, str) and pdf_url.strip():
-            return pdf_url.strip()
+        seen.add(candidate)
+        candidates.append(candidate)
+    return candidates
+
+
+def _payload_landing_candidates(payload: dict) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for location in _payload_locations(payload):
+        candidate = _location_value(location, "url")
+        if candidate is None or candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+    return candidates
+
+
+def _crawl_targets(
+    *,
+    payload: dict,
+    pdf_candidates: list[str],
+) -> list[str]:
+    targets = _payload_landing_candidates(payload)
+    seen = set(targets)
+    for candidate in pdf_candidates:
+        if candidate in seen:
+            continue
+        targets.append(candidate)
+        seen.add(candidate)
+    doi = normalize_doi(str(payload.get("doi") or ""))
+    doi_landing_url = f"https://doi.org/{doi}" if doi else None
+    if doi_landing_url and doi_landing_url not in seen:
+        targets.append(doi_landing_url)
+    return targets
+
+
+def _has_direct_payload_pdf(payload: dict) -> bool:
+    return any(looks_like_pdf_url(candidate) for candidate in _payload_pdf_candidates(payload))
+
+
+async def _resolved_pdf_url_from_payload(
+    payload: dict,
+    *,
+    client,
+) -> str | None:
+    pdf_candidates = _payload_pdf_candidates(payload)
+    for candidate in pdf_candidates:
+        if looks_like_pdf_url(candidate):
+            return candidate
+    for page_url in _crawl_targets(payload=payload, pdf_candidates=pdf_candidates)[:3]:
+        discovered = await resolve_pdf_from_landing_page(client, page_url=page_url)
+        if discovered:
+            logger.info(
+                "unpaywall.pdf_discovered_from_landing",
+                extra={"event": "unpaywall.pdf_discovered_from_landing", "landing_url": page_url},
+            )
+            return discovered
     return None
 
 
@@ -81,6 +172,7 @@ async def _fetch_unpaywall_payload_by_doi(
     doi: str,
     email: str,
 ) -> dict | None:
+    await wait_for_unpaywall_slot(min_interval_seconds=settings.unpaywall_min_interval_seconds)
     response = await client.get(
         UNPAYWALL_URL_TEMPLATE.format(doi=doi),
         params={"email": email},
@@ -130,7 +222,7 @@ async def _resolve_item_payload(
     payload: dict | None = None
     if doi:
         payload = await _fetch_unpaywall_payload_by_doi(client=client, doi=doi, email=email)
-        if payload is not None and _payload_pdf_url(payload):
+        if payload is not None and _has_direct_payload_pdf(payload):
             return payload, False
     if not allow_crossref or not settings.crossref_enabled:
         return payload, False
@@ -151,9 +243,13 @@ async def _resolve_item_payload(
     return payload, True
 
 
-def _doi_and_pdf_from_payload(payload: dict) -> tuple[str | None, str | None]:
+async def _doi_and_pdf_from_payload(
+    payload: dict,
+    *,
+    client,
+) -> tuple[str | None, str | None]:
     doi = normalize_doi(str(payload.get("doi") or ""))
-    return doi, _payload_pdf_url(payload)
+    return doi, await _resolved_pdf_url_from_payload(payload, client=client)
 
 
 def _resolution_targets(items: list[PublicationListItem]) -> list[PublicationListItem]:
@@ -164,11 +260,165 @@ def _crossref_budget_value() -> int:
     return max(int(settings.crossref_max_lookups_per_request), 0)
 
 
+def _outcome_with_failure(
+    *,
+    item: PublicationListItem,
+    failure_reason: str,
+    used_crossref: bool,
+) -> OaResolutionOutcome:
+    return OaResolutionOutcome(
+        publication_id=item.publication_id,
+        doi=_publication_doi(item),
+        pdf_url=None,
+        failure_reason=failure_reason,
+        source=None,
+        used_crossref=used_crossref,
+    )
+
+
+def _missing_payload_failure_reason(item: PublicationListItem, *, used_crossref: bool) -> str:
+    if _publication_doi(item):
+        return FAILURE_NO_RECORD
+    if used_crossref:
+        return FAILURE_NO_RECORD
+    return FAILURE_MISSING_DOI
+
+
+def _source_name(*, used_crossref: bool) -> str:
+    return "crossref+unpaywall" if used_crossref else "unpaywall"
+
+
+def _outcome_from_payload(
+    *,
+    item: PublicationListItem,
+    doi: str | None,
+    pdf_url: str | None,
+    used_crossref: bool,
+) -> OaResolutionOutcome:
+    return OaResolutionOutcome(
+        publication_id=item.publication_id,
+        doi=doi,
+        pdf_url=pdf_url,
+        failure_reason=None if pdf_url else FAILURE_NO_PDF,
+        source=_source_name(used_crossref=used_crossref),
+        used_crossref=used_crossref,
+    )
+
+
+def _resolved_pdf_count(outcomes: dict[int, OaResolutionOutcome]) -> int:
+    return sum(1 for outcome in outcomes.values() if outcome.pdf_url)
+
+
+def _outcome_metadata(outcomes: dict[int, OaResolutionOutcome]) -> dict[int, tuple[str | None, str | None]]:
+    return {
+        publication_id: (outcome.doi, outcome.pdf_url)
+        for publication_id, outcome in outcomes.items()
+    }
+
+
+async def _resolve_outcome_for_item(
+    *,
+    client,
+    item: PublicationListItem,
+    email: str,
+    allow_crossref: bool,
+) -> OaResolutionOutcome:
+    payload, used_crossref = await _resolve_item_payload(
+        client=client,
+        item=item,
+        email=email,
+        allow_crossref=allow_crossref,
+    )
+    if not isinstance(payload, dict):
+        return _outcome_with_failure(
+            item=item,
+            failure_reason=_missing_payload_failure_reason(item, used_crossref=used_crossref),
+            used_crossref=used_crossref,
+        )
+    doi, pdf_url = await _doi_and_pdf_from_payload(payload, client=client)
+    return _outcome_from_payload(
+        item=item,
+        doi=doi,
+        pdf_url=pdf_url,
+        used_crossref=used_crossref,
+    )
+
+
+def _doi_input_count(items: list[PublicationListItem]) -> int:
+    return len([item for item in items if _publication_doi(item)])
+
+
+def _search_attempt_count(*, targets: list[PublicationListItem]) -> int:
+    return len([item for item in targets if not _publication_doi(item)])
+
+
+async def _safe_outcome_for_item(
+    *,
+    client,
+    item: PublicationListItem,
+    email: str,
+    allow_crossref: bool,
+) -> OaResolutionOutcome:
+    try:
+        return await _resolve_outcome_for_item(
+            client=client,
+            item=item,
+            email=email,
+            allow_crossref=allow_crossref,
+        )
+    except Exception as exc:  # pragma: no cover - defensive network boundary
+        logger.warning(
+            "unpaywall.resolve_item_failed",
+            extra={
+                "event": "unpaywall.resolve_item_failed",
+                "publication_id": item.publication_id,
+                "error": str(exc),
+            },
+        )
+        return _outcome_with_failure(
+            item=item,
+            failure_reason=FAILURE_RESOLUTION_EXCEPTION,
+            used_crossref=allow_crossref and settings.crossref_enabled,
+        )
+
+
+async def _resolve_outcomes_with_client(
+    *,
+    client,
+    targets: list[PublicationListItem],
+    email: str,
+) -> dict[int, OaResolutionOutcome]:
+    outcomes: dict[int, OaResolutionOutcome] = {}
+    crossref_budget = _crossref_budget_value()
+    crossref_lookups = 0
+    for item in targets:
+        allow_crossref = crossref_budget > 0 and crossref_lookups < crossref_budget
+        outcome = await _safe_outcome_for_item(
+            client=client,
+            item=item,
+            email=email,
+            allow_crossref=allow_crossref,
+        )
+        if outcome.used_crossref:
+            crossref_lookups += 1
+        outcomes[item.publication_id] = outcome
+    return outcomes
+
+
 async def resolve_publication_oa_metadata(
     items: list[PublicationListItem],
     *,
     request_email: str | None = None,
 ) -> dict[int, tuple[str | None, str | None]]:
+    outcomes = await resolve_publication_oa_outcomes(items, request_email=request_email)
+    return _outcome_metadata(outcomes)
+
+
+async def resolve_publication_oa_outcomes(
+    items: list[PublicationListItem],
+    *,
+    request_email: str | None = None,
+) -> dict[int, OaResolutionOutcome]:
     if not settings.unpaywall_enabled:
         return {}
     email = _email_for_request(request_email)
@@ -178,35 +428,21 @@ async def resolve_publication_oa_metadata(
     import httpx
 
     timeout_seconds = max(float(settings.unpaywall_timeout_seconds), 0.5)
-    resolved: dict[int, tuple[str | None, str | None]] = {}
-    crossref_budget = _crossref_budget_value()
-    crossref_lookups = 0
     targets = _resolution_targets(items)[: max(int(settings.unpaywall_max_items_per_request), 0)]
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        for item in targets:
-            allow_crossref = crossref_budget > 0 and crossref_lookups < crossref_budget
-            payload, used_crossref = await _resolve_item_payload(
-                client=client,
-                item=item,
-                email=email,
-                allow_crossref=allow_crossref,
-            )
-            if used_crossref:
-                crossref_lookups += 1
-            if not isinstance(payload, dict):
-                continue
-            resolved[item.publication_id] = _doi_and_pdf_from_payload(payload)
-    resolved_count = sum(1 for _doi, pdf in resolved.values() if pdf)
-    doi_input_count = len([item for item in items if _publication_doi(item)])
-    target_doi_count = len([item for item in targets if _publication_doi(item)])
+        outcomes = await _resolve_outcomes_with_client(
+            client=client,
+            targets=targets,
+            email=email,
+        )
     _log_resolution_summary(
         publication_count=len(items),
-        doi_input_count=doi_input_count,
-        search_attempt_count=max(0, len(targets) - target_doi_count),
-        resolved_pdf_count=resolved_count,
+        doi_input_count=_doi_input_count(items),
+        search_attempt_count=_search_attempt_count(targets=targets),
+        resolved_pdf_count=_resolved_pdf_count(outcomes),
         email=email,
     )
-    return resolved
+    return outcomes
 
 
 async def resolve_publication_pdf_urls(

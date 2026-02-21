@@ -232,8 +232,21 @@ class Settings:
     unpaywall_enabled: bool = _env_bool("UNPAYWALL_ENABLED", True)
     unpaywall_email: str = _env_str("UNPAYWALL_EMAIL", "")
     unpaywall_timeout_seconds: float = _env_float("UNPAYWALL_TIMEOUT_SECONDS", 4.0)
+    unpaywall_min_interval_seconds: float = _env_float("UNPAYWALL_MIN_INTERVAL_SECONDS", 0.6)
     unpaywall_max_items_per_request: int = _env_int("UNPAYWALL_MAX_ITEMS_PER_REQUEST", 20)
     unpaywall_retry_cooldown_seconds: int = _env_int("UNPAYWALL_RETRY_COOLDOWN_SECONDS", 1800)
+    pdf_auto_retry_interval_seconds: int = _env_int(
+        "PDF_AUTO_RETRY_INTERVAL_SECONDS",
+        86_400,
+    )
+    pdf_auto_retry_first_interval_seconds: int = _env_int(
+        "PDF_AUTO_RETRY_FIRST_INTERVAL_SECONDS",
+        3_600,
+    )
+    pdf_auto_retry_max_attempts: int = _env_int("PDF_AUTO_RETRY_MAX_ATTEMPTS", 3)
+    unpaywall_pdf_discovery_enabled: bool = _env_bool("UNPAYWALL_PDF_DISCOVERY_ENABLED", True)
+    unpaywall_pdf_discovery_max_candidates: int = _env_int("UNPAYWALL_PDF_DISCOVERY_MAX_CANDIDATES", 5)
+    unpaywall_pdf_discovery_max_html_bytes: int = _env_int("UNPAYWALL_PDF_DISCOVERY_MAX_HTML_BYTES", 500_000)
     crossref_enabled: bool = _env_bool("CROSSREF_ENABLED", True)
     crossref_max_rows: int = _env_int("CROSSREF_MAX_ROWS", 10)
     crossref_timeout_seconds: float = _env_float("CROSSREF_TIMEOUT_SECONDS", 8.0)

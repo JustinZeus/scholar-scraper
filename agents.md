@@ -36,3 +36,8 @@ These limits prevent IP bans and are not to be optimized away.
 * **`app/services/domains/unpaywall/*`:** OA resolver by DOI only (best OA location + PDF URL extraction). Do not use Google Scholar for PDF resolution to avoid N+1 scrape amplification.
 * **`app/services/domains/portability/*`:** Handles JSON import/export for user-scoped scholars and scholar-publication link state while preserving global publication dedup rules.
 * **`app/services/domains/ingestion/scheduler.py`:** Owns automatic runs and continuation queue retries/drops; do not bypass safety gate or cooldown logic.
+
+
+## 6. UI rules
+Make sure to properly integrate tailwind in combination with the preset theming
+Clarity through both styling and language are a priority. all UI elements need to have a proper reason for existing.

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import { fetchDashboardSnapshot, type DashboardSnapshot } from "@/features/dashboard";
 import { ApiRequestError } from "@/lib/api/errors";
@@ -14,7 +14,7 @@ import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import { useAuthStore } from "@/stores/auth";
-import { RUN_STATUS_POLL_INTERVAL_MS, useRunStatusStore } from "@/stores/run_status";
+import { useRunStatusStore } from "@/stores/run_status";
 import { useUserSettingsStore } from "@/stores/user_settings";
 
 const loading = ref(true);
@@ -26,7 +26,6 @@ const refreshingAfterCompletion = ref(false);
 const auth = useAuthStore();
 const runStatus = useRunStatusStore();
 const userSettings = useUserSettingsStore();
-let latestRunSyncTimer: ReturnType<typeof setInterval> | null = null;
 
 const isStartBlocked = computed(
   () =>
@@ -135,23 +134,6 @@ function shouldRefreshAfterRunChange(
   return previousRun.status === "running";
 }
 
-function startLatestRunSyncLoop(): void {
-  if (latestRunSyncTimer !== null) {
-    return;
-  }
-  latestRunSyncTimer = setInterval(() => {
-    void runStatus.syncLatest();
-  }, RUN_STATUS_POLL_INTERVAL_MS);
-}
-
-function stopLatestRunSyncLoop(): void {
-  if (latestRunSyncTimer === null) {
-    return;
-  }
-  clearInterval(latestRunSyncTimer);
-  latestRunSyncTimer = null;
-}
-
 async function loadSnapshot(): Promise<void> {
   loading.value = true;
   errorMessage.value = null;
@@ -207,11 +189,6 @@ async function onTriggerRun(): Promise<void> {
 onMounted(() => {
   void loadSnapshot();
   void runStatus.syncLatest();
-  startLatestRunSyncLoop();
-});
-
-onUnmounted(() => {
-  stopLatestRunSyncLoop();
 });
 
 watch(
@@ -266,7 +243,12 @@ watch(
                     </div>
                     <p class="text-sm text-secondary">Newest papers found while checking your tracked scholar profiles.</p>
                   </div>
-                  <RouterLink to="/publications" class="link-inline text-sm">Open full publications view</RouterLink>
+                  <RouterLink
+                    to="/publications"
+                    class="inline-flex min-h-10 items-center justify-center rounded-lg border border-action-secondary-border bg-action-secondary-bg px-3 py-2 text-sm font-semibold text-action-secondary-text shadow-sm transition hover:border-action-secondary-hover-border hover:bg-action-secondary-hover-bg hover:text-action-secondary-hover-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset"
+                  >
+                    view all
+                  </RouterLink>
                 </div>
 
                 <AppEmptyState

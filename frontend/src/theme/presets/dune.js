@@ -1,22 +1,22 @@
 export default {
   "id": "dune",
   "label": "Dune",
-  "description": "Sandy beige environments featuring soft mauve highlights.",
+  "description": "Sandy clay surfaces with warm terracotta accents.",
   "modes": {
     "light": {
       "scale": {
         "brand": {
-          "50": "#f7f5f6",
-          "100": "#ece7e9",
-          "200": "#d7cccd",
-          "300": "#baabb2",
-          "400": "#9e8893",
-          "500": "#856b77",
-          "600": "#6c5460",
-          "700": "#58424d",
-          "800": "#4a3841",
-          "900": "#3d3036",
-          "950": "#21181d"
+          "50": "#fff5ef",
+          "100": "#fee8da",
+          "200": "#fbcfb2",
+          "300": "#f6ae81",
+          "400": "#ef8753",
+          "500": "#e2672f",
+          "600": "#bf4f25",
+          "700": "#9a3f21",
+          "800": "#7d3420",
+          "900": "#662d1d",
+          "950": "#38140e"
         },
         "info": {
           "50": "#f4f5f8",
@@ -74,7 +74,7 @@ export default {
       "surface": {
         "app": "#efece5",
         "nav": "#f7f5f0",
-        "nav_active": "#d7cccd",
+        "nav_active": "#fbcfb2",
         "card": "#f7f5f0",
         "card_muted": "#e6e3dd",
         "table": "#f7f5f0",
@@ -87,25 +87,25 @@ export default {
         "secondary": "#757072",
         "muted": "#9c9699",
         "inverse": "#f7f5f0",
-        "link": "#6c5460"
+        "link": "#bf4f25"
       },
       "border": {
         "default": "#e6e3dd",
         "strong": "#d1cdc6",
         "subtle": "#f2f0eb",
-        "interactive": "#baabb2"
+        "interactive": "#f6ae81"
       },
       "focus": {
-        "ring": "#9e8893",
+        "ring": "#ef8753",
         "ring_offset": "#efece5"
       },
       "action": {
         "primary": {
-          "bg": "#9e8893",
-          "border": "#9e8893",
+          "bg": "#ef8753",
+          "border": "#ef8753",
           "text": "#f7f5f0",
-          "hover_bg": "#856b77",
-          "hover_border": "#856b77",
+          "hover_bg": "#e2672f",
+          "hover_border": "#e2672f",
           "hover_text": "#ffffff"
         },
         "secondary": {
@@ -119,7 +119,7 @@ export default {
         "ghost": {
           "bg": "#efece5",
           "border": "#e6e3dd",
-          "text": "#6c5460",
+          "text": "#bf4f25",
           "hover_bg": "#e6e3dd",
           "hover_border": "#d1cdc6",
           "hover_text": "#3d3a3b"
@@ -159,17 +159,17 @@ export default {
     "dark": {
       "scale": {
         "brand": {
-          "50": "#f7f5f6",
-          "100": "#ece7e9",
-          "200": "#d7cccd",
-          "300": "#baabb2",
-          "400": "#9e8893",
-          "500": "#856b77",
-          "600": "#6c5460",
-          "700": "#58424d",
-          "800": "#4a3841",
-          "900": "#3d3036",
-          "950": "#21181d"
+          "50": "#fff5ef",
+          "100": "#fee8da",
+          "200": "#fbcfb2",
+          "300": "#f6ae81",
+          "400": "#ef8753",
+          "500": "#e2672f",
+          "600": "#bf4f25",
+          "700": "#9a3f21",
+          "800": "#7d3420",
+          "900": "#662d1d",
+          "950": "#38140e"
         },
         "info": {
           "50": "#f4f5f8",
@@ -227,7 +227,7 @@ export default {
       "surface": {
         "app": "#3d3a3b",
         "nav": "#4a4748",
-        "nav_active": "#6c5460",
+        "nav_active": "#bf4f25",
         "card": "#4a4748",
         "card_muted": "#575354",
         "table": "#4a4748",
@@ -240,25 +240,25 @@ export default {
         "secondary": "#b8b4b6",
         "muted": "#918e8f",
         "inverse": "#3d3a3b",
-        "link": "#baabb2"
+        "link": "#f6ae81"
       },
       "border": {
         "default": "#575354",
         "strong": "#696466",
         "subtle": "#474345",
-        "interactive": "#9e8893"
+        "interactive": "#ef8753"
       },
       "focus": {
-        "ring": "#9e8893",
+        "ring": "#ef8753",
         "ring_offset": "#3d3a3b"
       },
       "action": {
         "primary": {
-          "bg": "#9e8893",
-          "border": "#9e8893",
+          "bg": "#ef8753",
+          "border": "#ef8753",
           "text": "#1f1d1e",
-          "hover_bg": "#baabb2",
-          "hover_border": "#baabb2",
+          "hover_bg": "#f6ae81",
+          "hover_border": "#f6ae81",
           "hover_text": "#1f1d1e"
         },
         "secondary": {

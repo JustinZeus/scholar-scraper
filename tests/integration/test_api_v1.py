@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.runtime_deps import get_scholar_source
 from app.main import app
+from app.services.domains.publications.types import PublicationListItem
 from app.services.domains.settings import application as user_settings_service
 from app.services.domains.scholar.source import FetchResult
 from app.settings import settings
@@ -63,6 +64,49 @@ def _assert_safety_state_contract(payload: dict[str, object]) -> None:
     counters = payload["counters"]
     assert isinstance(counters, dict)
     assert set(counters.keys()) == SAFETY_COUNTER_KEYS
+
+
+async def _seed_publication_link_for_user(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_id: str,
+    title: str,
+    fingerprint: str,
+) -> tuple[int, int]:
+    scholar_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            RETURNING id
+            """
+        ),
+        {"user_id": user_id, "scholar_id": scholar_id, "display_name": scholar_id},
+    )
+    scholar_profile_id = int(scholar_result.scalar_one())
+    publication_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 4)
+            RETURNING id
+            """
+        ),
+        {"fingerprint": fingerprint, "title_raw": title, "title_normalized": title.lower()},
+    )
+    publication_id = int(publication_result.scalar_one())
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read)
+            VALUES (:scholar_profile_id, :publication_id, false)
+            """
+        ),
+        {"scholar_profile_id": scholar_profile_id, "publication_id": publication_id},
+    )
+    await db_session.commit()
+    return scholar_profile_id, publication_id
 
 
 @pytest.mark.integration
@@ -319,6 +363,265 @@ async def test_api_admin_user_management_endpoints(db_session: AsyncSession) -> 
         {"user_id": created_user_id},
     )
     assert created_exists.scalar_one() == 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_admin_dbops_integrity_and_repair_flow(db_session: AsyncSession) -> None:
+    await insert_user(db_session, email="api-admin-dbops@example.com", password="admin-password", is_admin=True)
+    target_user_id = await insert_user(db_session, email="api-dbops-target@example.com", password="target-password")
+    _scholar_id, publication_id = await _seed_publication_link_for_user(
+        db_session,
+        user_id=target_user_id,
+        scholar_id="dbopsTarget01",
+        title="DB Ops Target Paper",
+        fingerprint=f"{(target_user_id + 31):064x}",
+    )
+    client = TestClient(app)
+    login_user(client, email="api-admin-dbops@example.com", password="admin-password")
+    headers = _api_csrf_headers(client)
+
+    integrity_response = client.get("/api/v1/admin/db/integrity")
+    assert integrity_response.status_code == 200
+    integrity_payload = integrity_response.json()["data"]
+    assert integrity_payload["status"] in {"ok", "warning", "failed"}
+    assert any(
+        check["name"] == "missing_pdf_url"
+        for check in integrity_payload["checks"]
+    )
+
+    repair_response = client.post(
+        "/api/v1/admin/db/repairs/publication-links",
+        json={"user_id": target_user_id, "dry_run": True},
+        headers=headers,
+    )
+    assert repair_response.status_code == 200
+    repair_data = repair_response.json()["data"]
+    assert repair_data["status"] == "completed"
+    assert bool(repair_data["summary"]["dry_run"]) is True
+    job_id = int(repair_data["job_id"])
+
+    jobs_response = client.get("/api/v1/admin/db/repair-jobs?limit=10")
+    assert jobs_response.status_code == 200
+    jobs = jobs_response.json()["data"]["jobs"]
+    assert any(int(job["id"]) == job_id for job in jobs)
+
+    pdf_queue_response = client.get("/api/v1/admin/db/pdf-queue?limit=20")
+    assert pdf_queue_response.status_code == 200
+    pdf_queue_payload = pdf_queue_response.json()["data"]
+    assert isinstance(pdf_queue_payload["items"], list)
+    assert int(pdf_queue_payload["page"]) == 1
+    assert int(pdf_queue_payload["page_size"]) == 20
+    assert int(pdf_queue_payload["total_count"]) >= 0
+    assert isinstance(pdf_queue_payload["has_next"], bool)
+    assert isinstance(pdf_queue_payload["has_prev"], bool)
+    page_two_response = client.get("/api/v1/admin/db/pdf-queue?page=2&page_size=1")
+    assert page_two_response.status_code == 200
+    page_two_payload = page_two_response.json()["data"]
+    assert int(page_two_payload["page"]) == 2
+    assert int(page_two_payload["page_size"]) == 1
+    assert page_two_payload["has_prev"] is True
+    untracked_response = client.get("/api/v1/admin/db/pdf-queue?limit=20&status=untracked")
+    assert untracked_response.status_code == 200
+    assert any(
+        item["status"] == "untracked"
+        for item in untracked_response.json()["data"]["items"]
+    )
+
+    link_count_result = await db_session.execute(
+        text("SELECT count(*) FROM scholar_publications WHERE publication_id = :publication_id"),
+        {"publication_id": publication_id},
+    )
+    assert int(link_count_result.scalar_one()) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_admin_dbops_pdf_queue_requeue_endpoint(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await insert_user(db_session, email="api-admin-pdf@example.com", password="admin-password", is_admin=True)
+    target_user_id = await insert_user(db_session, email="api-pdf-target@example.com", password="target-password")
+    _scholar_id, publication_id = await _seed_publication_link_for_user(
+        db_session,
+        user_id=target_user_id,
+        scholar_id="dbopsPdf01",
+        title="PDF Queue Target",
+        fingerprint=f"{(target_user_id + 73):064x}",
+    )
+    monkeypatch.setattr(
+        "app.services.domains.publications.pdf_queue._schedule_rows",
+        lambda **_kwargs: None,
+    )
+    client = TestClient(app)
+    login_user(client, email="api-admin-pdf@example.com", password="admin-password")
+    headers = _api_csrf_headers(client)
+
+    first_response = client.post(
+        f"/api/v1/admin/db/pdf-queue/{publication_id}/requeue",
+        headers=headers,
+    )
+    assert first_response.status_code == 200
+    first_data = first_response.json()["data"]
+    assert first_data["publication_id"] == publication_id
+    assert first_data["queued"] is True
+    assert first_data["status"] == "queued"
+
+    second_response = client.post(
+        f"/api/v1/admin/db/pdf-queue/{publication_id}/requeue",
+        headers=headers,
+    )
+    assert second_response.status_code == 200
+    second_data = second_response.json()["data"]
+    assert second_data["queued"] is False
+    assert second_data["status"] == "blocked"
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_admin_dbops_pdf_queue_requeue_all_endpoint(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await insert_user(db_session, email="api-admin-pdf-all@example.com", password="admin-password", is_admin=True)
+    target_user_id = await insert_user(db_session, email="api-pdf-all-target@example.com", password="target-password")
+    _scholar_id, _publication_id = await _seed_publication_link_for_user(
+        db_session,
+        user_id=target_user_id,
+        scholar_id="dbopsPdfAll01",
+        title="PDF Queue All Target",
+        fingerprint=f"{(target_user_id + 83):064x}",
+    )
+    monkeypatch.setattr(
+        "app.services.domains.publications.pdf_queue._schedule_rows",
+        lambda **_kwargs: None,
+    )
+    client = TestClient(app)
+    login_user(client, email="api-admin-pdf-all@example.com", password="admin-password")
+    headers = _api_csrf_headers(client)
+
+    response = client.post(
+        "/api/v1/admin/db/pdf-queue/requeue-all?limit=500",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert int(payload["requested_count"]) >= 1
+    assert int(payload["queued_count"]) >= 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_admin_dbops_forbidden_for_non_admin_and_validates_scope(db_session: AsyncSession) -> None:
+    await insert_user(db_session, email="api-admin-dbops2@example.com", password="admin-password", is_admin=True)
+    member_user_id = await insert_user(db_session, email="api-dbops-member@example.com", password="member-password")
+    client = TestClient(app)
+    login_user(client, email="api-dbops-member@example.com", password="member-password")
+    headers = _api_csrf_headers(client)
+
+    forbidden_integrity = client.get("/api/v1/admin/db/integrity")
+    assert forbidden_integrity.status_code == 403
+    assert forbidden_integrity.json()["error"]["code"] == "forbidden"
+
+    forbidden_pdf_queue = client.get("/api/v1/admin/db/pdf-queue")
+    assert forbidden_pdf_queue.status_code == 403
+    assert forbidden_pdf_queue.json()["error"]["code"] == "forbidden"
+
+    forbidden_requeue = client.post(
+        "/api/v1/admin/db/pdf-queue/1/requeue",
+        headers=headers,
+    )
+    assert forbidden_requeue.status_code == 403
+    assert forbidden_requeue.json()["error"]["code"] == "forbidden"
+
+    forbidden_requeue_all = client.post(
+        "/api/v1/admin/db/pdf-queue/requeue-all?limit=100",
+        headers=headers,
+    )
+    assert forbidden_requeue_all.status_code == 403
+    assert forbidden_requeue_all.json()["error"]["code"] == "forbidden"
+
+    forbidden_repair = client.post(
+        "/api/v1/admin/db/repairs/publication-links",
+        json={"user_id": member_user_id, "dry_run": True},
+        headers=headers,
+    )
+    assert forbidden_repair.status_code == 403
+    assert forbidden_repair.json()["error"]["code"] == "forbidden"
+
+    admin_headers = _api_bootstrap_csrf_headers(client)
+    admin_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "api-admin-dbops2@example.com", "password": "admin-password"},
+        headers=admin_headers,
+    )
+    assert admin_login.status_code == 200
+    post_login_headers = {"X-CSRF-Token": admin_login.json()["data"]["csrf_token"]}
+    invalid_scope = client.post(
+        "/api/v1/admin/db/repairs/publication-links",
+        json={"user_id": member_user_id, "dry_run": True},
+        headers=post_login_headers,
+    )
+    assert invalid_scope.status_code == 400
+    assert invalid_scope.json()["error"]["code"] == "invalid_repair_scope"
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_admin_dbops_all_users_apply_requires_confirmation(db_session: AsyncSession) -> None:
+    await insert_user(db_session, email="api-admin-dbops3@example.com", password="admin-password", is_admin=True)
+    first_user_id = await insert_user(db_session, email="api-dbops-a@example.com", password="user-password")
+    second_user_id = await insert_user(db_session, email="api-dbops-b@example.com", password="user-password")
+    await _seed_publication_link_for_user(
+        db_session,
+        user_id=first_user_id,
+        scholar_id="dbopsAll01",
+        title="DB Ops All User Paper One",
+        fingerprint=f"{(first_user_id + 61):064x}",
+    )
+    await _seed_publication_link_for_user(
+        db_session,
+        user_id=second_user_id,
+        scholar_id="dbopsAll02",
+        title="DB Ops All User Paper Two",
+        fingerprint=f"{(second_user_id + 71):064x}",
+    )
+
+    client = TestClient(app)
+    login_user(client, email="api-admin-dbops3@example.com", password="admin-password")
+    headers = _api_csrf_headers(client)
+
+    missing_confirmation = client.post(
+        "/api/v1/admin/db/repairs/publication-links",
+        json={"scope_mode": "all_users", "dry_run": False},
+        headers=headers,
+    )
+    assert missing_confirmation.status_code == 422
+    assert "confirmation_text" in str(missing_confirmation.json())
+
+    apply_response = client.post(
+        "/api/v1/admin/db/repairs/publication-links",
+        json={
+            "scope_mode": "all_users",
+            "dry_run": False,
+            "confirmation_text": "REPAIR ALL USERS",
+        },
+        headers=headers,
+    )
+    assert apply_response.status_code == 200
+    apply_data = apply_response.json()["data"]
+    assert apply_data["status"] == "completed"
+    assert apply_data["scope"]["scope_mode"] == "all_users"
+    assert int(apply_data["summary"]["links_deleted"]) >= 2
+
+    remaining_links = await db_session.execute(text("SELECT count(*) FROM scholar_publications"))
+    assert int(remaining_links.scalar_one()) == 0
 
 
 @pytest.mark.integration
@@ -1400,12 +1703,19 @@ async def test_api_publications_list_and_mark_read(db_session: AsyncSession) -> 
     assert list_response.status_code == 200
     data = list_response.json()["data"]
     assert data["mode"] == "all"
+    assert data["favorite_only"] is False
     assert data["total_count"] == 2
     assert data["unread_count"] == 2
+    assert data["favorites_count"] == 0
     assert data["latest_count"] == 0
     assert data["new_count"] == data["latest_count"]
+    assert data["page"] == 1
+    assert data["page_size"] == 100
+    assert data["has_prev"] is False
+    assert data["has_next"] is False
     assert isinstance(data["publications"], list)
     assert len(data["publications"]) == 2
+    assert all(bool(item["is_favorite"]) is False for item in data["publications"])
     pdf_urls = {item["title"]: item["pdf_url"] for item in data["publications"]}
     assert pdf_urls["Paper A"] == "https://example.org/paper-a.pdf"
     assert pdf_urls["Paper B"] is None
@@ -1468,6 +1778,220 @@ async def test_api_publications_list_and_mark_read(db_session: AsyncSession) -> 
 @pytest.mark.integration
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_api_publications_list_supports_pagination(db_session: AsyncSession) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-pubs-paging@example.com",
+        password="api-password",
+    )
+    scholar_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            RETURNING id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "pagingScholar01",
+            "display_name": "Paging Scholar",
+        },
+    )
+    scholar_profile_id = int(scholar_result.scalar_one())
+
+    publication_ids: list[int] = []
+    for index in range(3):
+        created = await db_session.execute(
+            text(
+                """
+                INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+                VALUES (:fingerprint, :title_raw, :title_normalized, 1)
+                RETURNING id
+                """
+            ),
+            {
+                "fingerprint": f"{(user_id + 500 + index):064x}",
+                "title_raw": f"Paged Paper {index}",
+                "title_normalized": f"paged paper {index}",
+            },
+        )
+        publication_ids.append(int(created.scalar_one()))
+
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read, is_favorite)
+            VALUES
+              (:scholar_profile_id, :publication_1, false, false),
+              (:scholar_profile_id, :publication_2, false, false),
+              (:scholar_profile_id, :publication_3, false, false)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_profile_id,
+            "publication_1": publication_ids[0],
+            "publication_2": publication_ids[1],
+            "publication_3": publication_ids[2],
+        },
+    )
+    await db_session.commit()
+
+    client = TestClient(app)
+    login_user(client, email="api-pubs-paging@example.com", password="api-password")
+
+    first_page = client.get("/api/v1/publications?mode=all&page=1&page_size=2")
+    assert first_page.status_code == 200
+    first_data = first_page.json()["data"]
+    assert first_data["total_count"] == 3
+    assert first_data["page"] == 1
+    assert first_data["page_size"] == 2
+    assert first_data["has_prev"] is False
+    assert first_data["has_next"] is True
+    assert len(first_data["publications"]) == 2
+
+    second_page = client.get("/api/v1/publications?mode=all&page=2&page_size=2")
+    assert second_page.status_code == 200
+    second_data = second_page.json()["data"]
+    assert second_data["total_count"] == 3
+    assert second_data["page"] == 2
+    assert second_data["page_size"] == 2
+    assert second_data["has_prev"] is True
+    assert second_data["has_next"] is False
+    assert len(second_data["publications"]) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_api_publications_favorite_toggle_and_filter(db_session: AsyncSession) -> None:
+    user_id = await insert_user(
+        db_session,
+        email="api-pubs-favorites@example.com",
+        password="api-password",
+    )
+    scholar_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_profiles (user_id, scholar_id, display_name, is_enabled)
+            VALUES (:user_id, :scholar_id, :display_name, true)
+            RETURNING id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "scholar_id": "favoriteScholar01",
+            "display_name": "Favorite Scholar",
+        },
+    )
+    scholar_profile_id = int(scholar_result.scalar_one())
+    publication_a_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 9)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint": f"{(user_id + 101):064x}",
+            "title_raw": "Favorite Target",
+            "title_normalized": "favorite target",
+        },
+    )
+    publication_a_id = int(publication_a_result.scalar_one())
+    publication_b_result = await db_session.execute(
+        text(
+            """
+            INSERT INTO publications (fingerprint_sha256, title_raw, title_normalized, citation_count)
+            VALUES (:fingerprint, :title_raw, :title_normalized, 2)
+            RETURNING id
+            """
+        ),
+        {
+            "fingerprint": f"{(user_id + 102):064x}",
+            "title_raw": "Not Favorite",
+            "title_normalized": "not favorite",
+        },
+    )
+    publication_b_id = int(publication_b_result.scalar_one())
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO scholar_publications (scholar_profile_id, publication_id, is_read, is_favorite)
+            VALUES
+              (:scholar_profile_id, :publication_a_id, false, false),
+              (:scholar_profile_id, :publication_b_id, false, false)
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_profile_id,
+            "publication_a_id": publication_a_id,
+            "publication_b_id": publication_b_id,
+        },
+    )
+    await db_session.commit()
+
+    client = TestClient(app)
+    login_user(client, email="api-pubs-favorites@example.com", password="api-password")
+    headers = _api_csrf_headers(client)
+
+    set_response = client.post(
+        f"/api/v1/publications/{publication_a_id}/favorite",
+        json={"scholar_profile_id": scholar_profile_id, "is_favorite": True},
+        headers=headers,
+    )
+    assert set_response.status_code == 200
+    set_data = set_response.json()["data"]
+    assert set_data["publication"]["publication_id"] == publication_a_id
+    assert set_data["publication"]["is_favorite"] is True
+
+    favorite_only_response = client.get("/api/v1/publications?mode=all&favorite_only=true")
+    assert favorite_only_response.status_code == 200
+    favorite_only_data = favorite_only_response.json()["data"]
+    assert favorite_only_data["favorite_only"] is True
+    assert favorite_only_data["favorites_count"] == 1
+    assert favorite_only_data["total_count"] == 1
+    assert len(favorite_only_data["publications"]) == 1
+    assert int(favorite_only_data["publications"][0]["publication_id"]) == publication_a_id
+
+    clear_response = client.post(
+        f"/api/v1/publications/{publication_a_id}/favorite",
+        json={"scholar_profile_id": scholar_profile_id, "is_favorite": False},
+        headers=headers,
+    )
+    assert clear_response.status_code == 200
+    clear_data = clear_response.json()["data"]
+    assert clear_data["publication"]["publication_id"] == publication_a_id
+    assert clear_data["publication"]["is_favorite"] is False
+
+    favorite_only_after_clear_response = client.get("/api/v1/publications?mode=all&favorite_only=true")
+    assert favorite_only_after_clear_response.status_code == 200
+    favorite_only_after_clear_data = favorite_only_after_clear_response.json()["data"]
+    assert favorite_only_after_clear_data["favorites_count"] == 0
+    assert favorite_only_after_clear_data["total_count"] == 0
+    assert favorite_only_after_clear_data["publications"] == []
+
+    favorite_state_result = await db_session.execute(
+        text(
+            """
+            SELECT is_favorite
+            FROM scholar_publications
+            WHERE scholar_profile_id = :scholar_profile_id
+              AND publication_id = :publication_id
+            """
+        ),
+        {
+            "scholar_profile_id": scholar_profile_id,
+            "publication_id": publication_a_id,
+        },
+    )
+    assert bool(favorite_state_result.scalar_one()) is False
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_api_publications_list_schedules_background_enrichment(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -1521,20 +2045,14 @@ async def test_api_publications_list_schedules_background_enrichment(
     )
     await db_session.commit()
 
-    async def _fail_resolver(*args, **kwargs):
-        raise AssertionError("list endpoint should not resolve OA metadata inline")
-
-    async def _fake_schedule(*, user_id: int, request_email: str | None, items, max_items: int):
+    async def _fake_schedule(db_session, *, user_id: int, request_email: str | None, items, max_items: int):
+        assert db_session is not None
         assert user_id > 0
         assert request_email == "api-pubs-bg@example.com"
         assert int(max_items) > 0
         assert any(int(item.publication_id) == publication_id for item in items)
         return 1
 
-    monkeypatch.setattr(
-        "app.services.domains.publications.listing.resolve_publication_oa_metadata",
-        _fail_resolver,
-    )
     monkeypatch.setattr(
         "app.services.domains.publications.application.schedule_missing_pdf_enrichment_for_user",
         _fake_schedule,
@@ -1549,12 +2067,13 @@ async def test_api_publications_list_schedules_background_enrichment(
     assert len(data["publications"]) == 1
     assert int(data["publications"][0]["publication_id"]) == publication_id
     assert data["publications"][0]["pdf_url"] is None
+    assert data["publications"][0]["pdf_status"] in {"untracked", "queued", "running", "failed"}
 
 
 @pytest.mark.integration
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_api_publication_retry_pdf_updates_publication(
+async def test_api_publication_retry_pdf_queues_resolution_job(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1607,13 +2126,47 @@ async def test_api_publication_retry_pdf_updates_publication(
     )
     await db_session.commit()
 
-    async def _fake_resolver(items, *, request_email=None):
+    async def _fake_retry_scheduler(db_session, *, user_id: int, request_email: str | None, item: PublicationListItem):
+        assert db_session is not None
+        assert user_id > 0
         assert request_email == "api-pubs-retry@example.com"
-        return {int(items[0].publication_id): ("10.1000/retry-target", "https://oa.example/retry.pdf")}
+        assert int(item.publication_id) == publication_id
+        return True
 
     monkeypatch.setattr(
-        "app.services.domains.publications.listing.resolve_publication_oa_metadata",
-        _fake_resolver,
+        "app.services.domains.publications.application.schedule_retry_pdf_enrichment_for_row",
+        _fake_retry_scheduler,
+    )
+
+    async def _fake_hydrate(db_session, *, items: list[PublicationListItem]):
+        assert db_session is not None
+        assert len(items) == 1
+        item = items[0]
+        return [
+            PublicationListItem(
+                publication_id=item.publication_id,
+                scholar_profile_id=item.scholar_profile_id,
+                scholar_label=item.scholar_label,
+                title=item.title,
+                year=item.year,
+                citation_count=item.citation_count,
+                venue_text=item.venue_text,
+                pub_url=item.pub_url,
+                doi=item.doi,
+                pdf_url=item.pdf_url,
+                is_read=item.is_read,
+                first_seen_at=item.first_seen_at,
+                is_new_in_latest_run=item.is_new_in_latest_run,
+                pdf_status="queued",
+                pdf_attempt_count=1,
+                pdf_failure_reason="no_pdf_found",
+                pdf_failure_detail="no_pdf_found",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.services.domains.publications.application.hydrate_pdf_enrichment_state",
+        _fake_hydrate,
     )
 
     client = TestClient(app)
@@ -1627,18 +2180,21 @@ async def test_api_publication_retry_pdf_updates_publication(
     )
     assert response.status_code == 200
     payload = response.json()["data"]
-    assert payload["resolved_pdf"] is True
+    assert payload["queued"] is True
+    assert payload["resolved_pdf"] is False
     assert payload["publication"]["publication_id"] == publication_id
-    assert payload["publication"]["pdf_url"] == "https://oa.example/retry.pdf"
-    assert payload["publication"]["doi"] == "10.1000/retry-target"
+    assert payload["publication"]["pdf_url"] is None
+    assert payload["publication"]["pdf_status"] == "queued"
+    assert payload["publication"]["pdf_attempt_count"] == 1
+    assert payload["publication"]["pdf_failure_reason"] == "no_pdf_found"
 
     stored = await db_session.execute(
         text("SELECT doi, pdf_url FROM publications WHERE id = :publication_id"),
         {"publication_id": publication_id},
     )
     stored_doi, stored_pdf_url = stored.one()
-    assert stored_doi == "10.1000/retry-target"
-    assert stored_pdf_url == "https://oa.example/retry.pdf"
+    assert stored_doi is None
+    assert stored_pdf_url is None
 
 
 @pytest.mark.integration

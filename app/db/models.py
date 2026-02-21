@@ -81,8 +81,8 @@ class UserSetting(Base):
             name="run_interval_minutes_min_15",
         ),
         CheckConstraint(
-            "request_delay_seconds >= 1",
-            name="request_delay_seconds_min_1",
+            "request_delay_seconds >= 2",
+            name="request_delay_seconds_min_2",
         ),
     )
 
@@ -237,10 +237,80 @@ class Publication(Base):
     )
 
 
+class PublicationPdfJob(Base):
+    __tablename__ = "publication_pdf_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'resolved', 'failed')",
+            name="publication_pdf_jobs_status_valid",
+        ),
+        Index("ix_publication_pdf_jobs_status", "status"),
+        Index("ix_publication_pdf_jobs_updated_at", "updated_at"),
+        Index("ix_publication_pdf_jobs_queued_at", "queued_at"),
+    )
+
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'queued'"),
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_reason: Mapped[str | None] = mapped_column(String(64))
+    last_failure_detail: Mapped[str | None] = mapped_column(Text)
+    last_source: Mapped[str | None] = mapped_column(String(32))
+    last_requested_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PublicationPdfJobEvent(Base):
+    __tablename__ = "publication_pdf_job_events"
+    __table_args__ = (
+        Index("ix_publication_pdf_job_events_publication_created", "publication_id", "created_at"),
+        Index("ix_publication_pdf_job_events_created_at", "created_at"),
+        Index("ix_publication_pdf_job_events_event_type", "event_type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str | None] = mapped_column(String(16))
+    source: Mapped[str | None] = mapped_column(String(32))
+    failure_reason: Mapped[str | None] = mapped_column(String(64))
+    message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ScholarPublication(Base):
     __tablename__ = "scholar_publications"
     __table_args__ = (
         Index("ix_scholar_publications_is_read", "is_read"),
+        Index("ix_scholar_publications_is_favorite", "is_favorite"),
     )
 
     scholar_profile_id: Mapped[int] = mapped_column(
@@ -252,6 +322,9 @@ class ScholarPublication(Base):
         primary_key=True,
     )
     is_read: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    is_favorite: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
     first_seen_run_id: Mapped[int | None] = mapped_column(
@@ -314,6 +387,51 @@ class IngestionQueueItem(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     dropped_reason: Mapped[str | None] = mapped_column(String(128))
     dropped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DataRepairJob(Base):
+    __tablename__ = "data_repair_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('planned', 'running', 'completed', 'failed')",
+            name="data_repair_jobs_status_valid",
+        ),
+        Index("ix_data_repair_jobs_created_at", "created_at"),
+        Index("ix_data_repair_jobs_job_name_created_at", "job_name", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    requested_by: Mapped[str | None] = mapped_column(String(255))
+    scope: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    dry_run: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    )
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'planned'"),
+    )
+    summary: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    error_text: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

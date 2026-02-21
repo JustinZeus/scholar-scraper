@@ -15,4 +15,6 @@ planning/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+website/node_modules/
+website/build/
 AGENTS.MD

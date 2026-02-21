@@ -61,7 +61,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         should_log = self._log_requests and not self._is_skipped_path(request.url.path)
         if should_log:
-            logger.info(
+            logger.debug(
                 "request.started",
                 extra={
                     "event": "request.started",
@@ -88,7 +88,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             duration_ms = int((time.perf_counter() - start) * 1000)
             response.headers[REQUEST_ID_HEADER] = request_id
             if should_log:
-                logger.info(
+                logger.debug(
                     "request.completed",
                     extra={
                         "event": "request.completed",

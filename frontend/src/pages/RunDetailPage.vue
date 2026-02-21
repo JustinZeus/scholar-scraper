@@ -6,10 +6,10 @@ import AppPage from "@/components/layout/AppPage.vue";
 import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
 import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import RunStatusBadge from "@/components/patterns/RunStatusBadge.vue";
-import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
+import AppRefreshButton from "@/components/ui/AppRefreshButton.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import { getRunDetail, type RunDetail } from "@/features/runs";
 import { ApiRequestError } from "@/lib/api/errors";
@@ -108,9 +108,13 @@ onMounted(() => {
           </div>
           <p class="text-sm text-secondary">Refresh this run detail view after queue/run updates.</p>
         </div>
-        <AppButton variant="secondary" @click="loadDetail" :disabled="loading">
-          {{ loading ? "Refreshing..." : "Refresh" }}
-        </AppButton>
+        <AppRefreshButton
+          variant="secondary"
+          :loading="loading"
+          title="Refresh run detail"
+          loading-title="Refreshing run detail"
+          @click="loadDetail"
+        />
       </div>
     </AppCard>
 

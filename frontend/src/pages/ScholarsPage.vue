@@ -12,6 +12,7 @@ import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppInput from "@/components/ui/AppInput.vue";
 import AppModal from "@/components/ui/AppModal.vue";
+import AppRefreshButton from "@/components/ui/AppRefreshButton.vue";
 import AppSelect from "@/components/ui/AppSelect.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import {
@@ -812,9 +813,14 @@ onMounted(() => {
                   <AppButton variant="secondary" :disabled="loading || importingData" @click="onOpenImportPicker">
                     {{ importingData ? "Importing..." : "Import" }}
                   </AppButton>
-                  <AppButton variant="secondary" :disabled="loading || saving" @click="loadScholars">
-                    {{ loading ? "Refreshing..." : "Refresh" }}
-                  </AppButton>
+                  <AppRefreshButton
+                    variant="secondary"
+                    :disabled="saving"
+                    :loading="loading"
+                    title="Refresh scholars"
+                    loading-title="Refreshing scholars"
+                    @click="loadScholars"
+                  />
                 </div>
               </div>
               <input

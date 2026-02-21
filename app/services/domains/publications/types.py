@@ -19,6 +19,11 @@ class PublicationListItem:
     is_read: bool
     first_seen_at: datetime
     is_new_in_latest_run: bool
+    is_favorite: bool = False
+    pdf_status: str = "untracked"
+    pdf_attempt_count: int = 0
+    pdf_failure_reason: str | None = None
+    pdf_failure_detail: str | None = None
 
 
 @dataclass(frozen=True)
