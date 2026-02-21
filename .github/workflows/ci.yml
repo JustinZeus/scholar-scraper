@@ -17,6 +17,9 @@ jobs:
       - name: Enforce no generated artifacts
         run: ./scripts/check_no_generated_artifacts.sh
 
+      - name: Enforce env contract parity
+        run: python3 scripts/check_env_contract.py
+
   test:
     runs-on: ubuntu-latest
     needs:
@@ -106,12 +109,33 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+  docs-quality:
+    runs-on: ubuntu-latest
+    needs:
+      - repo-hygiene
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install docs dependencies
+        run: npm install --prefix website
+
+      - name: Docs build
+        run: npm --prefix website run build
+
   docker-publish:
     runs-on: ubuntu-latest
     needs:
       - repo-hygiene
       - test
       - frontend-quality
+      - docs-quality
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read

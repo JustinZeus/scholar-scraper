@@ -23,10 +23,26 @@ from app.services.domains.ingestion.application import (
     RunBlockedBySafetyPolicyError,
     ScholarIngestionService,
 )
+from app.services.domains.settings import application as user_settings_service
 from app.services.domains.scholar.source import LiveScholarSource
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _request_delay_floor_seconds() -> int:
+    return user_settings_service.resolve_request_delay_minimum(
+        settings.ingestion_min_request_delay_seconds
+    )
+
+
+def _effective_request_delay_seconds(value: int | None) -> int:
+    floor = _request_delay_floor_seconds()
+    try:
+        parsed = int(value) if value is not None else floor
+    except (TypeError, ValueError):
+        parsed = floor
+    return max(floor, parsed)
 
 
 @dataclass(frozen=True)
@@ -178,7 +194,7 @@ class SchedulerService:
         return _AutoRunCandidate(
             user_id=int(user_id),
             run_interval_minutes=int(run_interval_minutes),
-            request_delay_seconds=int(request_delay_seconds),
+            request_delay_seconds=_effective_request_delay_seconds(request_delay_seconds),
             cooldown_until=cooldown_until,
             cooldown_reason=(str(cooldown_reason).strip() if cooldown_reason else None),
         )
@@ -577,6 +593,4 @@ class SchedulerService:
             select(UserSetting.request_delay_seconds).where(UserSetting.user_id == user_id)
         )
         delay = result.scalar_one_or_none()
-        if delay is None:
-            return 10
-        return max(1, int(delay))
+        return _effective_request_delay_seconds(delay)

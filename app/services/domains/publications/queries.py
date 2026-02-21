@@ -36,7 +36,9 @@ def publications_query(
     mode: str,
     latest_run_id: int | None,
     scholar_profile_id: int | None,
+    favorite_only: bool,
     limit: int,
+    offset: int = 0,
 ) -> Select[tuple]:
     scholar_label = ScholarProfile.display_name
     stmt = (
@@ -53,6 +55,7 @@ def publications_query(
             Publication.doi,
             Publication.pdf_url,
             ScholarPublication.is_read,
+            ScholarPublication.is_favorite,
             ScholarPublication.first_seen_run_id,
             ScholarPublication.created_at,
         )
@@ -60,10 +63,13 @@ def publications_query(
         .join(ScholarProfile, ScholarProfile.id == ScholarPublication.scholar_profile_id)
         .where(ScholarProfile.user_id == user_id)
         .order_by(ScholarPublication.created_at.desc(), Publication.id.desc())
+        .offset(max(int(offset), 0))
         .limit(limit)
     )
     if scholar_profile_id is not None:
         stmt = stmt.where(ScholarProfile.id == scholar_profile_id)
+    if favorite_only:
+        stmt = stmt.where(ScholarPublication.is_favorite.is_(True))
     if mode == MODE_UNREAD:
         stmt = stmt.where(ScholarPublication.is_read.is_(False))
     if mode == MODE_LATEST:
@@ -93,6 +99,7 @@ def publication_query_for_user(
             Publication.doi,
             Publication.pdf_url,
             ScholarPublication.is_read,
+            ScholarPublication.is_favorite,
             ScholarPublication.first_seen_run_id,
             ScholarPublication.created_at,
         )
@@ -146,6 +153,7 @@ def publication_list_item_from_row(
         doi,
         pdf_url,
         is_read,
+        is_favorite,
         first_seen_run_id,
         created_at,
     ) = row
@@ -161,6 +169,7 @@ def publication_list_item_from_row(
         doi=doi,
         pdf_url=pdf_url,
         is_read=bool(is_read),
+        is_favorite=bool(is_favorite),
         first_seen_at=created_at,
         is_new_in_latest_run=(
             latest_run_id is not None and int(first_seen_run_id or 0) == latest_run_id
@@ -182,6 +191,7 @@ def unread_item_from_row(row: tuple) -> UnreadPublicationItem:
         doi,
         pdf_url,
         _is_read,
+        _is_favorite,
         _first_seen_run_id,
         _created_at,
     ) = row

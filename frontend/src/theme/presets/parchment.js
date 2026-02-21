@@ -1,22 +1,22 @@
 export default {
     "id": "parchment",
         "label": "Parchment",
-            "description": "Dusty beige canvas paired with slate blue accents.",
+            "description": "Cool parchment base with bold indigo-blue accents.",
                 "modes": {
         "light": {
             "scale": {
                 "brand": {
-                    "50": "#f5f7f9",
-                        "100": "#eaf0f4",
-                            "200": "#d5e0e9",
-                                "300": "#b3c9d7",
-                                    "400": "#8daabc",
-                                        "500": "#7d93a4",
-                                            "600": "#5c7487",
-                                                "700": "#495e6f",
-                                                    "800": "#3f4d5b",
-                                                        "900": "#36414e",
-                                                            "950": "#232b35"
+                    "50": "#f2f6ff",
+                        "100": "#e3edff",
+                            "200": "#c6d8ff",
+                                "300": "#9db9ff",
+                                    "400": "#7596f4",
+                                        "500": "#5878da",
+                                            "600": "#4362bc",
+                                                "700": "#384f95",
+                                                    "800": "#31427b",
+                                                        "900": "#2b3965",
+                                                            "950": "#1b223f"
                 },
                 "info": {
                     "50": "#f2f6fa",
@@ -74,7 +74,7 @@ export default {
             "surface": {
                 "app": "#f2eee9",
                     "nav": "#faf8f5",
-                        "nav_active": "#d5e0e9",
+                        "nav_active": "#c6d8ff",
                             "card": "#faf8f5",
                                 "card_muted": "#eae5df",
                                     "table": "#faf8f5",
@@ -87,25 +87,25 @@ export default {
                     "secondary": "#6b737c",
                         "muted": "#929ba5",
                             "inverse": "#faf8f5",
-                                "link": "#5c7487"
+                                "link": "#4362bc"
             },
             "border": {
                 "default": "#eae5df",
                     "strong": "#d4cec6",
                         "subtle": "#f6f3ef",
-                            "interactive": "#b3c9d7"
+                            "interactive": "#9db9ff"
             },
             "focus": {
-                "ring": "#7d93a4",
+                "ring": "#5878da",
                     "ring_offset": "#f2eee9"
             },
             "action": {
                 "primary": {
-                    "bg": "#7d93a4",
-                        "border": "#7d93a4",
+                    "bg": "#5878da",
+                        "border": "#5878da",
                             "text": "#faf8f5",
-                                "hover_bg": "#5c7487",
-                                    "hover_border": "#5c7487",
+                                "hover_bg": "#4362bc",
+                                    "hover_border": "#4362bc",
                                         "hover_text": "#ffffff"
                 },
                 "secondary": {
@@ -119,7 +119,7 @@ export default {
                 "ghost": {
                     "bg": "#f2eee9",
                         "border": "#eae5df",
-                            "text": "#5c7487",
+                            "text": "#4362bc",
                                 "hover_bg": "#eae5df",
                                     "hover_border": "#d4cec6",
                                         "hover_text": "#333638"
@@ -159,17 +159,17 @@ export default {
         "dark": {
             "scale": {
                 "brand": {
-                    "50": "#f5f7f9",
-                        "100": "#eaf0f4",
-                            "200": "#d5e0e9",
-                                "300": "#b3c9d7",
-                                    "400": "#8daabc",
-                                        "500": "#7d93a4",
-                                            "600": "#5c7487",
-                                                "700": "#495e6f",
-                                                    "800": "#3f4d5b",
-                                                        "900": "#36414e",
-                                                            "950": "#232b35"
+                    "50": "#f2f6ff",
+                        "100": "#e3edff",
+                            "200": "#c6d8ff",
+                                "300": "#9db9ff",
+                                    "400": "#7596f4",
+                                        "500": "#5878da",
+                                            "600": "#4362bc",
+                                                "700": "#384f95",
+                                                    "800": "#31427b",
+                                                        "900": "#2b3965",
+                                                            "950": "#1b223f"
                 },
                 "info": {
                     "50": "#f2f6fa",
@@ -227,7 +227,7 @@ export default {
             "surface": {
                 "app": "#35373a",
                     "nav": "#424549",
-                        "nav_active": "#5c7487",
+                        "nav_active": "#4362bc",
                             "card": "#424549",
                                 "card_muted": "#4d5156",
                                     "table": "#424549",
@@ -240,25 +240,25 @@ export default {
                     "secondary": "#aeb5bc",
                         "muted": "#889098",
                             "inverse": "#35373a",
-                                "link": "#b3c9d7"
+                                "link": "#9db9ff"
             },
             "border": {
                 "default": "#4d5156",
                     "strong": "#5d6268",
                         "subtle": "#3e4145",
-                            "interactive": "#7d93a4"
+                            "interactive": "#5878da"
             },
             "focus": {
-                "ring": "#7d93a4",
+                "ring": "#5878da",
                     "ring_offset": "#35373a"
             },
             "action": {
                 "primary": {
-                    "bg": "#7d93a4",
-                        "border": "#7d93a4",
+                    "bg": "#5878da",
+                        "border": "#5878da",
                             "text": "#1a1b1d",
-                                "hover_bg": "#b3c9d7",
-                                    "hover_border": "#b3c9d7",
+                                "hover_bg": "#9db9ff",
+                                    "hover_border": "#9db9ff",
                                         "hover_text": "#1a1b1d"
                 },
                 "secondary": {

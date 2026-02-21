@@ -91,6 +91,35 @@ class ScholarIngestionService:
     def __init__(self, *, source: ScholarSource) -> None:
         self._source = source
 
+    @staticmethod
+    def _effective_request_delay_seconds(value: int) -> int:
+        policy_minimum = user_settings_service.resolve_request_delay_minimum(
+            settings.ingestion_min_request_delay_seconds
+        )
+        return max(policy_minimum, _int_or_default(value, policy_minimum))
+
+    @staticmethod
+    def _log_request_delay_coercion(
+        *,
+        user_id: int,
+        requested_request_delay_seconds: int,
+        effective_request_delay_seconds: int,
+    ) -> None:
+        logger.warning(
+            "ingestion.request_delay_coerced_to_policy_floor",
+            extra={
+                "event": "ingestion.request_delay_coerced_to_policy_floor",
+                "user_id": user_id,
+                "requested_request_delay_seconds": requested_request_delay_seconds,
+                "effective_request_delay_seconds": effective_request_delay_seconds,
+                "policy_minimum_request_delay_seconds": user_settings_service.resolve_request_delay_minimum(
+                    settings.ingestion_min_request_delay_seconds
+                ),
+                "metric_name": "ingestion_request_delay_coerced_total",
+                "metric_value": 1,
+            },
+        )
+
     async def _load_user_settings_for_run(
         self,
         db_session: AsyncSession,
@@ -1278,7 +1307,14 @@ class ScholarIngestionService:
         return failure_summary, alert_summary
 
     async def run_for_user(self, db_session: AsyncSession, *, user_id: int, trigger_type: RunTriggerType, request_delay_seconds: int, network_error_retries: int = 1, retry_backoff_seconds: float = 1.0, max_pages_per_scholar: int = 30, page_size: int = 100, scholar_profile_ids: set[int] | None = None, start_cstart_by_scholar_id: dict[int, int] | None = None, auto_queue_continuations: bool = True, queue_delay_seconds: int = 60, idempotency_key: str | None = None, alert_blocked_failure_threshold: int = 1, alert_network_failure_threshold: int = 2, alert_retry_scheduled_threshold: int = 3) -> RunExecutionSummary:
-        paging_kwargs = self._paging_kwargs(request_delay_seconds=request_delay_seconds, network_error_retries=network_error_retries, retry_backoff_seconds=retry_backoff_seconds, max_pages_per_scholar=max_pages_per_scholar, page_size=page_size)
+        effective_request_delay_seconds = self._effective_request_delay_seconds(request_delay_seconds)
+        if effective_request_delay_seconds != _int_or_default(request_delay_seconds, effective_request_delay_seconds):
+            self._log_request_delay_coercion(
+                user_id=user_id,
+                requested_request_delay_seconds=_int_or_default(request_delay_seconds, 0),
+                effective_request_delay_seconds=effective_request_delay_seconds,
+            )
+        paging_kwargs = self._paging_kwargs(request_delay_seconds=effective_request_delay_seconds, network_error_retries=network_error_retries, retry_backoff_seconds=retry_backoff_seconds, max_pages_per_scholar=max_pages_per_scholar, page_size=page_size)
         threshold_kwargs = self._threshold_kwargs(alert_blocked_failure_threshold=alert_blocked_failure_threshold, alert_network_failure_threshold=alert_network_failure_threshold, alert_retry_scheduled_threshold=alert_retry_scheduled_threshold)
         user_settings, run, scholars, start_cstart_map = await self._initialize_run_for_user(
             db_session,

@@ -8,7 +8,6 @@ import PublicationsPage from "@/pages/PublicationsPage.vue";
 import RunsPage from "@/pages/RunsPage.vue";
 import RunDetailPage from "@/pages/RunDetailPage.vue";
 import SettingsPage from "@/pages/SettingsPage.vue";
-import AdminUsersPage from "@/pages/AdminUsersPage.vue";
 import StyleGuidePage from "@/pages/StyleGuidePage.vue";
 
 export const router = createRouter({
@@ -64,12 +63,6 @@ export const router = createRouter({
       path: "/admin/runs/:id",
       name: "run-detail",
       component: RunDetailPage,
-      meta: { requiresAuth: true, requiresAdmin: true },
-    },
-    {
-      path: "/admin/users",
-      name: "admin-users",
-      component: AdminUsersPage,
       meta: { requiresAuth: true, requiresAdmin: true },
     },
     {

@@ -11,6 +11,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
+import AppRefreshButton from "@/components/ui/AppRefreshButton.vue";
 import AppTable from "@/components/ui/AppTable.vue";
 import {
   clearQueueItem,
@@ -210,9 +211,13 @@ onMounted(() => {
         <AppButton :disabled="isStartBlocked" :title="startCheckDisabledReason || undefined" @click="onTriggerManualRun">
           {{ runButtonLabel }}
         </AppButton>
-        <AppButton variant="secondary" :disabled="loading" @click="loadData">
-          {{ loading ? "Refreshing..." : "Refresh" }}
-        </AppButton>
+        <AppRefreshButton
+          variant="secondary"
+          :loading="loading"
+          title="Refresh runs and queue"
+          loading-title="Refreshing runs and queue"
+          @click="loadData"
+        />
       </div>
       <div
         v-if="runStatus.isLikelyRunning"

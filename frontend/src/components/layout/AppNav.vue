@@ -19,22 +19,12 @@ const emit = defineEmits<{
 }>();
 
 const links = computed(() => {
-  const base = [
-    { id: "dashboard", to: "/dashboard", label: "Dashboard", adminOnly: false },
-    { id: "scholars", to: "/scholars", label: "Scholars", adminOnly: false },
-    { id: "publications", to: "/publications", label: "Publications", adminOnly: false },
-    { id: "settings", to: "/settings", label: "Settings", adminOnly: false },
-    { id: "style-guide", to: "/admin/style-guide", label: "Style Guide", adminOnly: true },
-    { id: "runs", to: "/admin/runs", label: "Runs", adminOnly: true },
-    { id: "users", to: "/admin/users", label: "Users", adminOnly: true },
+  return [
+    { id: "dashboard", to: "/dashboard", label: "Dashboard" },
+    { id: "scholars", to: "/scholars", label: "Scholars" },
+    { id: "publications", to: "/publications", label: "Publications" },
+    { id: "settings", to: "/settings", label: "Settings" },
   ];
-
-  return base.filter((item) => {
-    if (item.adminOnly && !auth.isAdmin) {
-      return false;
-    }
-    return userSettings.isPageVisible(item.id);
-  });
 });
 const navSafetyText = computed(() => {
   if (!userSettings.manualRunAllowed) {

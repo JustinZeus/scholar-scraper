@@ -1,22 +1,22 @@
 export default {
   "id": "oatmeal",
   "label": "Oatmeal",
-  "description": "Warm beige foundation with muted sage green interactions.",
+  "description": "Cream backdrop with vivid olive-green accents.",
   "modes": {
     "light": {
       "scale": {
         "brand": {
-          "50": "#f4f7f5",
-          "100": "#e5ece7",
-          "200": "#ccd9cf",
-          "300": "#a8bdae",
-          "400": "#8ba390",
-          "500": "#6c8471",
-          "600": "#546958",
-          "700": "#435446",
-          "800": "#364338",
-          "900": "#2d372f",
-          "950": "#161d18"
+          "50": "#effbf4",
+          "100": "#d8f4e5",
+          "200": "#b4e8cd",
+          "300": "#7fd8ab",
+          "400": "#4ec788",
+          "500": "#2faa6e",
+          "600": "#248a58",
+          "700": "#1f6f48",
+          "800": "#1b593c",
+          "900": "#174a32",
+          "950": "#0c2a1d"
         },
         "info": {
           "50": "#f0f5f6",
@@ -74,7 +74,7 @@ export default {
       "surface": {
         "app": "#f5f2eb",
         "nav": "#fcfaf5",
-        "nav_active": "#e5e1d8",
+        "nav_active": "#d8f4e5",
         "card": "#fcfaf5",
         "card_muted": "#ece9e1",
         "table": "#fcfaf5",
@@ -87,25 +87,25 @@ export default {
         "secondary": "#716d68",
         "muted": "#96918a",
         "inverse": "#fcfaf5",
-        "link": "#546958"
+        "link": "#248a58"
       },
       "border": {
         "default": "#e5e1d8",
         "strong": "#cecabf",
         "subtle": "#f0ede6",
-        "interactive": "#a8bdae"
+        "interactive": "#7fd8ab"
       },
       "focus": {
-        "ring": "#8ba390",
+        "ring": "#4ec788",
         "ring_offset": "#f5f2eb"
       },
       "action": {
         "primary": {
-          "bg": "#8ba390",
-          "border": "#8ba390",
+          "bg": "#4ec788",
+          "border": "#4ec788",
           "text": "#fcfaf5",
-          "hover_bg": "#6c8471",
-          "hover_border": "#6c8471",
+          "hover_bg": "#2faa6e",
+          "hover_border": "#2faa6e",
           "hover_text": "#ffffff"
         },
         "secondary": {
@@ -119,7 +119,7 @@ export default {
         "ghost": {
           "bg": "#f5f2eb",
           "border": "#e5e1d8",
-          "text": "#546958",
+          "text": "#248a58",
           "hover_bg": "#ece9e1",
           "hover_border": "#cecabf",
           "hover_text": "#3d3b38"
@@ -159,17 +159,17 @@ export default {
     "dark": {
       "scale": {
         "brand": {
-          "50": "#f4f7f5",
-          "100": "#e5ece7",
-          "200": "#ccd9cf",
-          "300": "#a8bdae",
-          "400": "#8ba390",
-          "500": "#6c8471",
-          "600": "#546958",
-          "700": "#435446",
-          "800": "#364338",
-          "900": "#2d372f",
-          "950": "#161d18"
+          "50": "#effbf4",
+          "100": "#d8f4e5",
+          "200": "#b4e8cd",
+          "300": "#7fd8ab",
+          "400": "#4ec788",
+          "500": "#2faa6e",
+          "600": "#248a58",
+          "700": "#1f6f48",
+          "800": "#1b593c",
+          "900": "#174a32",
+          "950": "#0c2a1d"
         },
         "info": {
           "50": "#f0f5f6",
@@ -227,7 +227,7 @@ export default {
       "surface": {
         "app": "#3a3937",
         "nav": "#454442",
-        "nav_active": "#546958",
+        "nav_active": "#248a58",
         "card": "#454442",
         "card_muted": "#504e4c",
         "table": "#454442",
@@ -240,25 +240,25 @@ export default {
         "secondary": "#bebcb8",
         "muted": "#969490",
         "inverse": "#3a3937",
-        "link": "#a8bdae"
+        "link": "#7fd8ab"
       },
       "border": {
         "default": "#504e4c",
         "strong": "#62605d",
         "subtle": "#403f3d",
-        "interactive": "#8ba390"
+        "interactive": "#4ec788"
       },
       "focus": {
-        "ring": "#8ba390",
+        "ring": "#4ec788",
         "ring_offset": "#3a3937"
       },
       "action": {
         "primary": {
-          "bg": "#8ba390",
-          "border": "#8ba390",
+          "bg": "#4ec788",
+          "border": "#4ec788",
           "text": "#1a1918",
-          "hover_bg": "#a8bdae",
-          "hover_border": "#a8bdae",
+          "hover_bg": "#7fd8ab",
+          "hover_border": "#7fd8ab",
           "hover_text": "#1a1918"
         },
         "secondary": {

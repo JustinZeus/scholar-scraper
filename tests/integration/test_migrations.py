@@ -13,10 +13,13 @@ EXPECTED_TABLES = {
     "ingestion_queue_items",
     "author_search_runtime_state",
     "author_search_cache_entries",
+    "data_repair_jobs",
+    "publication_pdf_jobs",
+    "publication_pdf_job_events",
 }
 
 EXPECTED_ENUMS = {"run_status", "run_trigger_type"}
-EXPECTED_REVISION = "20260220_0011"
+EXPECTED_REVISION = "20260221_0015"
 
 
 @pytest.mark.integration
@@ -220,3 +223,44 @@ async def test_user_settings_has_scrape_safety_columns(db_session: AsyncSession)
     )
     columns = {row[0] for row in result}
     assert columns == {"scrape_safety_state", "scrape_cooldown_until", "scrape_cooldown_reason"}
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.migrations
+@pytest.mark.asyncio
+async def test_scholar_publications_has_is_favorite_column(db_session: AsyncSession) -> None:
+    result = await db_session.execute(
+        text(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'scholar_publications'
+              AND column_name = 'is_favorite'
+            """
+        )
+    )
+    assert result.scalar_one() == 1
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.migrations
+@pytest.mark.asyncio
+async def test_user_settings_request_delay_constraint_enforces_two_second_floor(
+    db_session: AsyncSession,
+) -> None:
+    result = await db_session.execute(
+        text(
+            """
+            SELECT pg_get_constraintdef(c.oid)
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            WHERE t.relname = 'user_settings'
+              AND c.contype = 'c'
+              AND pg_get_constraintdef(c.oid) ILIKE '%request_delay_seconds >= 2%'
+            """
+        )
+    )
+    definition = result.scalar_one()
+    assert "request_delay_seconds >= 2" in definition

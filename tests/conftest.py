@@ -21,6 +21,9 @@ RESET_SQL = text(
     TRUNCATE TABLE
       author_search_cache_entries,
       author_search_runtime_state,
+      data_repair_jobs,
+      publication_pdf_job_events,
+      publication_pdf_jobs,
       ingestion_queue_items,
       scholar_publications,
       crawl_runs,

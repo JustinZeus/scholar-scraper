@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ApiMeta(BaseModel):
@@ -525,6 +525,175 @@ class AdminResetPasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AdminDbIntegrityCheckData(BaseModel):
+    name: str
+    count: int
+    severity: str
+    message: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminDbIntegrityData(BaseModel):
+    status: str
+    checked_at: datetime
+    failures: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    checks: list[AdminDbIntegrityCheckData] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminDbIntegrityEnvelope(BaseModel):
+    data: AdminDbIntegrityData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminDbRepairJobData(BaseModel):
+    id: int
+    job_name: str
+    requested_by: str | None
+    dry_run: bool
+    status: str
+    scope: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    error_text: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminDbRepairJobsData(BaseModel):
+    jobs: list[AdminDbRepairJobData] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminDbRepairJobsEnvelope(BaseModel):
+    data: AdminDbRepairJobsData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminPdfQueueItemData(BaseModel):
+    publication_id: int
+    title: str
+    doi: str | None
+    pdf_url: str | None
+    status: str
+    attempt_count: int
+    last_failure_reason: str | None
+    last_failure_detail: str | None
+    last_source: str | None
+    requested_by_user_id: int | None
+    requested_by_email: str | None
+    queued_at: datetime | None
+    last_attempt_at: datetime | None
+    resolved_at: datetime | None
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminPdfQueueData(BaseModel):
+    items: list[AdminPdfQueueItemData] = Field(default_factory=list)
+    total_count: int = 0
+    page: int = 1
+    page_size: int = 100
+    has_next: bool = False
+    has_prev: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminPdfQueueEnvelope(BaseModel):
+    data: AdminPdfQueueData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminPdfQueueRequeueData(BaseModel):
+    publication_id: int
+    queued: bool
+    status: str
+    message: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminPdfQueueRequeueEnvelope(BaseModel):
+    data: AdminPdfQueueRequeueData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminPdfQueueBulkEnqueueData(BaseModel):
+    requested_count: int
+    queued_count: int
+    message: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminPdfQueueBulkEnqueueEnvelope(BaseModel):
+    data: AdminPdfQueueBulkEnqueueData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminRepairPublicationLinksRequest(BaseModel):
+    scope_mode: Literal["single_user", "all_users"] = "single_user"
+    user_id: int | None = Field(default=None, ge=1)
+    scholar_profile_ids: list[int] = Field(default_factory=list, max_length=200)
+    dry_run: bool = True
+    gc_orphan_publications: bool = False
+    requested_by: str | None = None
+    confirmation_text: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "AdminRepairPublicationLinksRequest":
+        if self.scope_mode == "single_user" and self.user_id is None:
+            raise ValueError("user_id is required when scope_mode=single_user.")
+        if self.scope_mode == "all_users" and self.user_id is not None:
+            raise ValueError("user_id must be omitted when scope_mode=all_users.")
+        if not self.dry_run and self.scope_mode == "all_users":
+            expected = "REPAIR ALL USERS"
+            provided = (self.confirmation_text or "").strip()
+            if provided != expected:
+                raise ValueError(
+                    "confirmation_text must equal 'REPAIR ALL USERS' "
+                    "when applying a repair to all users."
+                )
+        return self
+
+
+class AdminRepairPublicationLinksResultData(BaseModel):
+    job_id: int
+    status: str
+    scope: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminRepairPublicationLinksEnvelope(BaseModel):
+    data: AdminRepairPublicationLinksResultData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SettingsPolicyData(BaseModel):
     min_run_interval_minutes: int
     min_request_delay_seconds: int
@@ -576,7 +745,12 @@ class PublicationItemData(BaseModel):
     pub_url: str | None
     doi: str | None
     pdf_url: str | None
+    pdf_status: str = "untracked"
+    pdf_attempt_count: int = 0
+    pdf_failure_reason: str | None = None
+    pdf_failure_detail: str | None = None
     is_read: bool
+    is_favorite: bool = False
     first_seen_at: datetime
     is_new_in_latest_run: bool
 
@@ -585,11 +759,17 @@ class PublicationItemData(BaseModel):
 
 class PublicationsListData(BaseModel):
     mode: str
+    favorite_only: bool = False
     selected_scholar_profile_id: int | None
     unread_count: int
+    favorites_count: int
     latest_count: int
     new_count: int
     total_count: int
+    page: int
+    page_size: int
+    has_next: bool = False
+    has_prev: bool = False
     publications: list[PublicationItemData]
 
     model_config = ConfigDict(extra="forbid")
@@ -652,6 +832,7 @@ class RetryPublicationPdfRequest(BaseModel):
 
 class RetryPublicationPdfData(BaseModel):
     message: str
+    queued: bool
     resolved_pdf: bool
     publication: PublicationItemData
 
@@ -660,6 +841,27 @@ class RetryPublicationPdfData(BaseModel):
 
 class RetryPublicationPdfEnvelope(BaseModel):
     data: RetryPublicationPdfData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TogglePublicationFavoriteRequest(BaseModel):
+    scholar_profile_id: int = Field(ge=1)
+    is_favorite: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TogglePublicationFavoriteData(BaseModel):
+    message: str
+    publication: PublicationItemData
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TogglePublicationFavoriteEnvelope(BaseModel):
+    data: TogglePublicationFavoriteData
     meta: ApiMeta
 
     model_config = ConfigDict(extra="forbid")
