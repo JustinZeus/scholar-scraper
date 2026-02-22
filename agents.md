@@ -7,6 +7,7 @@ Adhere strictly to these constraints.
 * **DRY (Don't Repeat Yourself):** Abstract repetitive logic immediately. No duplicate boilerplate for database queries, API responses, or error handling.
 * **Negative Space Programming:** Utilize explicit assertions and constraints to define invalid states. Fail fast and early. Do not allow silent failures or cascading malformed data, especially in DOM parsing.
 * **Cyclomatic Complexity:** Flatten logic. Use early returns and guard clauses instead of deep nesting.
+no magic numbers
 
 ## 2. Domain Architecture & Data Model
 * **Data Isolation:** Scholar tracking is **user-scoped**. Validate mapping/join tables; never assume global links between users and Scholar IDs.
@@ -29,13 +30,6 @@ These limits prevent IP bans and are not to be optimized away.
 
 ## 5. Domain Service Boundaries
 * **Strict Modularity:** Flat files in the `app/services/` root are strictly prohibited. All business logic and routing must reside exclusively within `app/services/domains/`.
-* **`app/services/domains/scholar/*`:** Parser contract is fail-fast. Layout drift must emit explicit exceptions and `layout_*` reasons/warnings. Never allow silent partial success.
-* **`app/services/domains/ingestion/application.py`:** Orchestrates ingestion runs; validate parser outputs before persistence; enforce publication candidate constraints before upsert.
-* **`app/services/domains/publications/*`:** Publication list/read-state query layer. Includes `doi` + `pdf_url` fields for UI consumption, enforces non-blocking lazy OA enrichment scheduling on list reads, and exposes per-publication PDF retry behavior.
-* **`app/services/domains/crossref/*`:** DOI discovery fallback module. Must use bounded/paced lookups to avoid burst traffic and 429 responses.
-* **`app/services/domains/unpaywall/*`:** OA resolver by DOI only (best OA location + PDF URL extraction). Do not use Google Scholar for PDF resolution to avoid N+1 scrape amplification.
-* **`app/services/domains/portability/*`:** Handles JSON import/export for user-scoped scholars and scholar-publication link state while preserving global publication dedup rules.
-* **`app/services/domains/ingestion/scheduler.py`:** Owns automatic runs and continuation queue retries/drops; do not bypass safety gate or cooldown logic.
 
 
 ## 6. UI rules

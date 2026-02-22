@@ -182,7 +182,7 @@ onBeforeUnmount(() => {
       :class="
         hasTriggerSlot
           ? 'cursor-help rounded-sm'
-          : 'h-5 w-5 justify-center rounded-full border border-stroke-interactive/80 bg-surface-card-muted/80 text-[11px] font-semibold text-ink-secondary transition hover:bg-action-secondary-hover-bg'
+          : 'h-5 w-5 justify-center rounded-full border border-stroke-interactive/80 bg-surface-card-muted/80 text-xs font-semibold text-ink-secondary transition hover:bg-action-secondary-hover-bg'
       "
       :aria-label="text"
       @mouseenter="openTooltip"
@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
         role="tooltip"
         :style="tooltipStyle"
         :class="sideClass"
-        class="pointer-events-none fixed z-[90] w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-stroke-default bg-surface-card/95 px-2.5 py-2 text-xs leading-relaxed text-ink-secondary shadow-lg"
+        class="pointer-events-none fixed z-50 w-auto max-w-xs rounded-lg border border-stroke-default bg-surface-card/95 px-2.5 py-2 text-xs leading-relaxed text-ink-secondary shadow-lg"
       >
         {{ text }}
       </span>

@@ -52,7 +52,9 @@ async def test_crossref_discovers_doi_from_best_title_match(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-async def test_crossref_rejects_large_year_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_crossref_relaxed_fallback_allows_large_year_mismatch_for_strong_title_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def _fake_fetch_items(**_kwargs):
         return [
             {
@@ -72,4 +74,30 @@ async def test_crossref_rejects_large_year_mismatch(monkeypatch: pytest.MonkeyPa
         max_rows=10,
         email=None,
     )
-    assert doi is None
+    assert doi == "10.1000/wrong-year"
+
+
+@pytest.mark.asyncio
+async def test_crossref_relaxed_fallback_allows_author_mismatch_for_strong_title_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_fetch_items(**_kwargs):
+        return [
+            {
+                "DOI": "10.1000/author-fallback",
+                "title": ["Induction of Pluripotent Stem Cells from Adult Human Fibroblasts"],
+                "issued": {"date-parts": [[2007]]},
+                "author": [{"family": "SomeoneElse"}],
+            }
+        ]
+
+    monkeypatch.setattr(crossref_app, "_fetch_items", _fake_fetch_items)
+    doi = await crossref_app.discover_doi_for_publication(
+        item=_item(
+            title="Induction of Pluripotent Stem Cells from Adult Human Fibroblasts",
+            year=2007,
+        ),
+        max_rows=10,
+        email=None,
+    )
+    assert doi == "10.1000/author-fallback"

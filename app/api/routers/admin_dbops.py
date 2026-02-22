@@ -58,6 +58,7 @@ def _serialize_pdf_queue_item(item) -> dict[str, object]:
         "publication_id": item.publication_id,
         "title": item.title,
         "doi": item.doi,
+        "display_identifier": _serialize_display_identifier(item.display_identifier),
         "pdf_url": item.pdf_url,
         "status": item.status,
         "attempt_count": item.attempt_count,
@@ -70,6 +71,18 @@ def _serialize_pdf_queue_item(item) -> dict[str, object]:
         "last_attempt_at": item.last_attempt_at,
         "resolved_at": item.resolved_at,
         "updated_at": item.updated_at,
+    }
+
+
+def _serialize_display_identifier(value) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {
+        "kind": value.kind,
+        "value": value.value,
+        "label": value.label,
+        "url": value.url,
+        "confidence_score": float(value.confidence_score),
     }
 
 

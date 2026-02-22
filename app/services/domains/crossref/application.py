@@ -21,6 +21,8 @@ STOP_WORDS = {"the", "and", "for", "with", "from", "method", "study", "analysis"
 _RATE_LOCK = threading.Lock()
 _LAST_REQUEST_AT = 0.0
 logger = logging.getLogger(__name__)
+STRICT_TITLE_MATCH_THRESHOLD = 0.75
+RELAXED_TITLE_MATCH_THRESHOLD = 0.85
 
 
 def _rate_limit_wait(min_interval_seconds: float) -> None:
@@ -132,7 +134,42 @@ def _candidate_rank(*, title: str, year: int | None, item: dict) -> tuple[float,
     return score, doi
 
 
-def _best_candidate_doi(
+def _year_delta(source_year: int | None, candidate_year: int | None) -> int | None:
+    if source_year is None or candidate_year is None:
+        return None
+    return abs(int(source_year) - int(candidate_year))
+
+
+def _candidate_rank_relaxed(
+    *,
+    title: str,
+    year: int | None,
+    item: dict,
+    author_surname: str | None,
+) -> tuple[float, str | None]:
+    doi = normalize_doi(str(item.get("DOI") or ""))
+    if doi is None:
+        return 0.0, None
+    score = _title_match_score(title, _candidate_title(item))
+    if score <= 0:
+        return 0.0, None
+    candidate_year = _candidate_year(item)
+    delta = _year_delta(year, candidate_year)
+    if delta is not None:
+        if delta <= 1:
+            score += 0.05
+        elif delta <= 3:
+            score += 0.0
+        elif delta <= 5:
+            score -= 0.03
+        else:
+            score -= 0.08
+    if _candidate_author_match(item, author_surname):
+        score += 0.03
+    return score, doi
+
+
+def _best_candidate_doi_strict(
     *,
     title: str,
     year: int | None,
@@ -149,7 +186,7 @@ def _best_candidate_doi(
             continue
         score, doi = _candidate_rank(title=title, year=year, item=item)
         candidate_year = _candidate_year(item)
-        if doi is None or score < 0.75:
+        if doi is None or score < STRICT_TITLE_MATCH_THRESHOLD:
             continue
         if score > best_score:
             best_score = score
@@ -164,6 +201,92 @@ def _best_candidate_doi(
             best_doi = doi
             best_year = candidate_year
     return best_doi
+
+
+def _best_candidate_doi_relaxed(
+    *,
+    title: str,
+    year: int | None,
+    items: list[dict],
+    author_surname: str | None,
+) -> str | None:
+    best_score = 0.0
+    best_doi: str | None = None
+    best_author_match = False
+    best_delta: int | None = None
+    best_year: int | None = None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        score, doi = _candidate_rank_relaxed(
+            title=title,
+            year=year,
+            item=item,
+            author_surname=author_surname,
+        )
+        if doi is None or score < RELAXED_TITLE_MATCH_THRESHOLD:
+            continue
+        candidate_year = _candidate_year(item)
+        candidate_author_match = _candidate_author_match(item, author_surname)
+        candidate_delta = _year_delta(year, candidate_year)
+        if score > best_score:
+            best_score = score
+            best_doi = doi
+            best_author_match = candidate_author_match
+            best_delta = candidate_delta
+            best_year = candidate_year
+            continue
+        if abs(score - best_score) > 0.02:
+            continue
+        if candidate_author_match and not best_author_match:
+            best_doi = doi
+            best_author_match = True
+            best_delta = candidate_delta
+            best_year = candidate_year
+            continue
+        if best_delta is None and candidate_delta is not None:
+            best_doi = doi
+            best_author_match = candidate_author_match
+            best_delta = candidate_delta
+            best_year = candidate_year
+            continue
+        if best_delta is not None and candidate_delta is not None and candidate_delta < best_delta:
+            best_doi = doi
+            best_author_match = candidate_author_match
+            best_delta = candidate_delta
+            best_year = candidate_year
+            continue
+        if best_year is None or candidate_year is None:
+            continue
+        if candidate_year < best_year:
+            best_doi = doi
+            best_author_match = candidate_author_match
+            best_delta = candidate_delta
+            best_year = candidate_year
+    return best_doi
+
+
+def _best_candidate_doi(
+    *,
+    title: str,
+    year: int | None,
+    items: list[dict],
+    author_surname: str | None,
+) -> str | None:
+    strict_match = _best_candidate_doi_strict(
+        title=title,
+        year=year,
+        items=items,
+        author_surname=author_surname,
+    )
+    if strict_match:
+        return strict_match
+    return _best_candidate_doi_relaxed(
+        title=title,
+        year=year,
+        items=items,
+        author_surname=author_surname,
+    )
 
 
 def _works_client(email: str | None) -> Works:

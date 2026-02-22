@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.domains.publication_identifiers import application as identifier_service
 from app.services.domains.publications.modes import (
     MODE_ALL,
     MODE_UNREAD,
@@ -44,7 +45,10 @@ async def list_for_user(
         publication_list_item_from_row(row, latest_run_id=latest_run_id)
         for row in result.all()
     ]
-    return rows
+    return await identifier_service.overlay_publication_items_with_display_identifiers(
+        db_session,
+        items=rows,
+    )
 
 
 async def retry_pdf_for_user(
@@ -54,12 +58,19 @@ async def retry_pdf_for_user(
     scholar_profile_id: int,
     publication_id: int,
 ) -> PublicationListItem | None:
-    return await get_publication_item_for_user(
+    item = await get_publication_item_for_user(
         db_session,
         user_id=user_id,
         scholar_profile_id=scholar_profile_id,
         publication_id=publication_id,
     )
+    if item is None:
+        return None
+    hydrated = await identifier_service.overlay_publication_items_with_display_identifiers(
+        db_session,
+        items=[item],
+    )
+    return hydrated[0] if hydrated else item
 
 
 async def list_unread_for_user(

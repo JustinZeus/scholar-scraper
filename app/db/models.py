@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -229,6 +230,53 @@ class Publication(Base):
     pub_url: Mapped[str | None] = mapped_column(Text)
     doi: Mapped[str | None] = mapped_column(String(255))
     pdf_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PublicationIdentifier(Base):
+    __tablename__ = "publication_identifiers"
+    __table_args__ = (
+        UniqueConstraint(
+            "publication_id",
+            "kind",
+            "value_normalized",
+            name="uq_publication_identifiers_publication_kind_value",
+        ),
+        CheckConstraint(
+            "confidence_score >= 0 AND confidence_score <= 1",
+            name="publication_identifiers_confidence_score_range",
+        ),
+        Index(
+            "ix_publication_identifiers_kind_value",
+            "kind",
+            "value_normalized",
+        ),
+        Index(
+            "ix_publication_identifiers_publication_id",
+            "publication_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    value_raw: Mapped[str] = mapped_column(Text, nullable=False)
+    value_normalized: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence_score: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        server_default=text("0"),
+    )
+    evidence_url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

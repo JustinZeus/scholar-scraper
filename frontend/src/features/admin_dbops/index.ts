@@ -1,5 +1,13 @@
 import { apiRequest } from "@/lib/api/client";
 
+export interface DisplayIdentifier {
+  kind: string;
+  value: string;
+  label: string;
+  url: string | null;
+  confidence_score: number;
+}
+
 export interface AdminDbIntegrityCheck {
   name: string;
   count: number;
@@ -34,6 +42,7 @@ export interface AdminPdfQueueItem {
   publication_id: number;
   title: string;
   doi: string | null;
+  display_identifier: DisplayIdentifier | null;
   pdf_url: string | null;
   status: string;
   attempt_count: number;

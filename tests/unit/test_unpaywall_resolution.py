@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -38,6 +39,26 @@ def _item(publication_id: int) -> PublicationListItem:
     )
 
 
+def test_publication_doi_uses_stored_value_when_metadata_has_no_doi() -> None:
+    item = replace(
+        _item(99),
+        pub_url="https://scholar.google.com/citations?view_op=view_citation&citation_for_view=abc:123",
+        venue_text="Cell 130 (5), 2007",
+        doi="10.1016/j.cell.2007.11.019",
+    )
+    assert unpaywall_app._publication_doi(item) == "10.1016/j.cell.2007.11.019"
+
+
+def test_publication_doi_prefers_explicit_metadata_doi_over_stored_value() -> None:
+    item = replace(
+        _item(100),
+        pub_url="https://doi.org/10.2000/fresh-value",
+        venue_text="Cell",
+        doi="10.1000/stale-value",
+    )
+    assert unpaywall_app._publication_doi(item) == "10.2000/fresh-value"
+
+
 @pytest.mark.asyncio
 async def test_unpaywall_resolve_prefers_direct_pdf_without_landing_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {
@@ -49,7 +70,7 @@ async def test_unpaywall_resolve_prefers_direct_pdf_without_landing_crawl(monkey
     }
 
     async def _fake_resolve_item_payload(**_kwargs):
-        return payload, False
+        return payload, False, "10.1016/j.cell.2007.11.019"
 
     async def _fail_crawl(_client, *, page_url: str):
         raise AssertionError(f"unexpected landing crawl: {page_url}")
@@ -75,7 +96,7 @@ async def test_unpaywall_resolve_crawls_landing_page_when_pdf_url_is_not_direct(
     crawled_pages: list[str] = []
 
     async def _fake_resolve_item_payload(**_kwargs):
-        return payload, False
+        return payload, False, "10.1016/j.cell.2007.11.019"
 
     async def _fake_crawl(_client, *, page_url: str):
         crawled_pages.append(page_url)
@@ -87,3 +108,22 @@ async def test_unpaywall_resolve_crawls_landing_page_when_pdf_url_is_not_direct(
     resolved = await unpaywall_app.resolve_publication_oa_metadata([_item(2)], request_email="user@example.com")
     assert resolved == {2: ("10.1016/j.cell.2007.11.019", "https://oa.example.org/files/paper-42.pdf")}
     assert "https://oa.example.org/landing/42" in crawled_pages
+
+
+@pytest.mark.asyncio
+async def test_unpaywall_preserves_crossref_doi_when_unpaywall_has_no_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_resolve_item_payload(**_kwargs):
+        return None, True, "10.2000/crossref-only"
+
+    monkeypatch.setattr(unpaywall_app, "_resolve_item_payload", _fake_resolve_item_payload)
+    monkeypatch.setattr("httpx.AsyncClient", _DummyAsyncClient)
+
+    outcomes = await unpaywall_app.resolve_publication_oa_outcomes([_item(3)], request_email="user@example.com")
+
+    outcome = outcomes[3]
+    assert outcome.doi == "10.2000/crossref-only"
+    assert outcome.pdf_url is None
+    assert outcome.failure_reason == unpaywall_app.FAILURE_NO_RECORD
+    assert outcome.used_crossref is True

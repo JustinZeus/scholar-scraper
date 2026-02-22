@@ -29,6 +29,7 @@ from app.services.domains.ingestion.constants import (
     RUN_LOCK_NAMESPACE,
 )
 from app.services.domains.doi.normalize import first_doi_from_texts
+from app.services.domains.publication_identifiers import application as identifier_service
 from app.services.domains.ingestion.fingerprints import (
     _build_body_excerpt,
     _dedupe_publication_candidates,
@@ -2071,14 +2072,23 @@ class ScholarIngestionService:
             fingerprint_publication=fingerprint_publication,
         )
         if publication is None:
-            return await self._create_publication(
+            created = await self._create_publication(
                 db_session,
                 candidate=candidate,
                 fingerprint=fingerprint,
             )
+            await identifier_service.sync_identifiers_for_publication_fields(
+                db_session,
+                publication=created,
+            )
+            return created
         self._update_existing_publication(
             publication=publication,
             candidate=candidate,
+        )
+        await identifier_service.sync_identifiers_for_publication_fields(
+            db_session,
+            publication=publication,
         )
         return publication
 

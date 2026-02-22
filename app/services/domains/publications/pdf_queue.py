@@ -17,11 +17,16 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_session_factory
+from app.services.domains.publication_identifiers import application as identifier_service
+from app.services.domains.publication_identifiers.types import DisplayIdentifier
+from app.services.domains.publications.pdf_resolution_pipeline import (
+    PDF_SOURCE_SCHOLAR_PUBLICATION_PAGE,
+    resolve_publication_pdf_outcome_for_row,
+)
 from app.services.domains.publications.types import PublicationListItem
 from app.services.domains.unpaywall.application import (
     FAILURE_RESOLUTION_EXCEPTION,
     OaResolutionOutcome,
-    resolve_publication_oa_outcomes,
 )
 from app.settings import settings
 
@@ -57,6 +62,7 @@ class PdfQueueListItem:
     last_attempt_at: datetime | None
     resolved_at: datetime | None
     updated_at: datetime
+    display_identifier: DisplayIdentifier | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +124,7 @@ def _item_from_row_and_job(
         pdf_attempt_count=int(job.attempt_count) if job is not None else 0,
         pdf_failure_reason=job.last_failure_reason if job is not None else None,
         pdf_failure_detail=job.last_failure_detail if job is not None else None,
+        display_identifier=row.display_identifier,
     )
 
 
@@ -366,8 +373,11 @@ async def _fetch_outcome_for_row(
     row: PublicationListItem,
     request_email: str | None,
 ) -> OaResolutionOutcome:
-    outcomes = await resolve_publication_oa_outcomes([row], request_email=request_email)
-    outcome = outcomes.get(row.publication_id)
+    pipeline_result = await resolve_publication_pdf_outcome_for_row(
+        row=row,
+        request_email=request_email,
+    )
+    outcome = pipeline_result.outcome
     if outcome is not None:
         return outcome
     return _failed_outcome(row=row)
@@ -417,6 +427,11 @@ async def _persist_outcome(
         if publication is None or job is None:
             return
         _apply_publication_update(publication, doi=outcome.doi, pdf_url=outcome.pdf_url)
+        await identifier_service.sync_identifiers_for_publication_resolution(
+            db_session,
+            publication=publication,
+            source=outcome.source,
+        )
         _apply_job_outcome(job, outcome=outcome)
         event_type, status = _result_event(outcome)
         db_session.add(
@@ -794,6 +809,18 @@ def _queue_item_from_row(row: tuple) -> PdfQueueListItem:
     )
 
 
+async def _hydrated_queue_items(
+    db_session: AsyncSession,
+    *,
+    rows: list[tuple],
+) -> list[PdfQueueListItem]:
+    items = [_queue_item_from_row(row) for row in rows]
+    return await identifier_service.overlay_pdf_queue_items_with_display_identifiers(
+        db_session,
+        items=items,
+    )
+
+
 async def list_pdf_queue_items(
     db_session: AsyncSession,
     *,
@@ -811,7 +838,7 @@ async def list_pdf_queue_items(
                 offset=bounded_offset,
             )
         )
-        return [_queue_item_from_row(row) for row in result.all()]
+        return await _hydrated_queue_items(db_session, rows=list(result.all()))
     if normalized_status is None:
         result = await db_session.execute(
             _all_queue_select(
@@ -819,7 +846,7 @@ async def list_pdf_queue_items(
                 offset=bounded_offset,
             )
         )
-        return [_queue_item_from_row(row) for row in result.all()]
+        return await _hydrated_queue_items(db_session, rows=list(result.all()))
     result = await db_session.execute(
         _tracked_queue_select(
             limit=bounded_limit,
@@ -827,7 +854,7 @@ async def list_pdf_queue_items(
             status=normalized_status,
         )
     )
-    return [_queue_item_from_row(row) for row in result.all()]
+    return await _hydrated_queue_items(db_session, rows=list(result.all()))
 
 
 async def count_pdf_queue_items(

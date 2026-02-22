@@ -169,11 +169,15 @@ function publicationPrimaryUrl(item: PublicationItem): string | null {
   return item.pub_url || item.pdf_url;
 }
 
-function publicationDoiUrl(item: PublicationItem): string | null {
-  if (!item.doi) {
+function publicationIdentifierUrl(item: PublicationItem): string | null {
+  if (!item.display_identifier?.url) {
     return null;
   }
-  return `https://doi.org/${item.doi}`;
+  return item.display_identifier.url;
+}
+
+function publicationIdentifierLabel(item: PublicationItem): string | null {
+  return item.display_identifier?.label ?? null;
 }
 
 const selectedScholarName = computed(() => {
@@ -1043,14 +1047,14 @@ watch(
                   </a>
                   <span v-else class="block truncate font-medium" :title="item.title">{{ item.title }}</span>
                   <a
-                    v-if="publicationDoiUrl(item)"
-                    :href="publicationDoiUrl(item) || ''"
+                    v-if="publicationIdentifierUrl(item)"
+                    :href="publicationIdentifierUrl(item) || ''"
                     target="_blank"
                     rel="noreferrer"
                     class="link-inline block truncate text-xs"
-                    :title="`DOI: ${item.doi}`"
+                    :title="publicationIdentifierLabel(item) || ''"
                   >
-                    DOI: {{ item.doi }}
+                    {{ publicationIdentifierLabel(item) }}
                   </a>
                 </div>
               </td>

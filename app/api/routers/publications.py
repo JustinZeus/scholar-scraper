@@ -21,6 +21,7 @@ from app.api.schemas import (
 )
 from app.db.models import User
 from app.db.session import get_db_session
+from app.services.domains.publication_identifiers import application as identifier_service
 from app.services.domains.publications import application as publication_service
 from app.services.domains.scholars import application as scholar_service
 from app.settings import settings
@@ -62,6 +63,7 @@ def _serialize_publication_item(item) -> dict[str, object]:
         "venue_text": item.venue_text,
         "pub_url": item.pub_url,
         "doi": item.doi,
+        "display_identifier": _serialize_display_identifier(item.display_identifier),
         "pdf_url": item.pdf_url,
         "pdf_status": item.pdf_status,
         "pdf_attempt_count": item.pdf_attempt_count,
@@ -71,6 +73,18 @@ def _serialize_publication_item(item) -> dict[str, object]:
         "is_favorite": item.is_favorite,
         "first_seen_at": item.first_seen_at,
         "is_new_in_latest_run": item.is_new_in_latest_run,
+    }
+
+
+def _serialize_display_identifier(value) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {
+        "kind": value.kind,
+        "value": value.value,
+        "label": value.label,
+        "url": value.url,
+        "confidence_score": float(value.confidence_score),
     }
 
 
@@ -280,7 +294,12 @@ async def _favorite_publication_state(
         db_session,
         items=[publication],
     )
-    return hydrated[0] if hydrated else publication
+    current = hydrated[0] if hydrated else publication
+    identifiers = await identifier_service.overlay_publication_items_with_display_identifiers(
+        db_session,
+        items=[current],
+    )
+    return identifiers[0] if identifiers else current
 
 
 def _log_retry_pdf_result(

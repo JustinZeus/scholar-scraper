@@ -748,8 +748,14 @@ watch(
               <td>
                 <div class="grid gap-1">
                   <span class="font-medium text-ink-primary">{{ item.title }}</span>
-                  <a v-if="item.doi" :href="`https://doi.org/${item.doi}`" target="_blank" rel="noreferrer" class="link-inline text-xs">
-                    DOI: {{ item.doi }}
+                  <a
+                    v-if="item.display_identifier?.url"
+                    :href="item.display_identifier.url"
+                    target="_blank"
+                    rel="noreferrer"
+                    class="link-inline text-xs"
+                  >
+                    {{ item.display_identifier.label }}
                   </a>
                 </div>
               </td>

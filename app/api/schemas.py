@@ -581,10 +581,21 @@ class AdminDbRepairJobsEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class DisplayIdentifierData(BaseModel):
+    kind: str
+    value: str
+    label: str
+    url: str | None
+    confidence_score: float = Field(ge=0.0, le=1.0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AdminPdfQueueItemData(BaseModel):
     publication_id: int
     title: str
     doi: str | None
+    display_identifier: DisplayIdentifierData | None = None
     pdf_url: str | None
     status: str
     attempt_count: int
@@ -744,6 +755,7 @@ class PublicationItemData(BaseModel):
     venue_text: str | None
     pub_url: str | None
     doi: str | None
+    display_identifier: DisplayIdentifierData | None = None
     pdf_url: str | None
     pdf_status: str = "untracked"
     pdf_attempt_count: int = 0

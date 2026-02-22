@@ -123,6 +123,16 @@ class LiveScholarSource:
         )
         return await asyncio.to_thread(self._fetch_sync, requested_url)
 
+    async def fetch_publication_html(self, publication_url: str) -> FetchResult:
+        logger.debug(
+            "scholar_source.publication_fetch_started",
+            extra={
+                "event": "scholar_source.publication_fetch_started",
+                "requested_url": publication_url,
+            },
+        )
+        return await asyncio.to_thread(self._fetch_sync, publication_url)
+
     def _build_request(self, requested_url: str) -> Request:
         return Request(
             requested_url,

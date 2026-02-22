@@ -64,20 +64,16 @@ def _extract_explicit_doi(text: str | None) -> str | None:
 
 def _publication_doi(item: PublicationListItem | UnreadPublicationItem) -> str | None:
     stored = normalize_doi(item.doi)
-    if stored:
-        in_metadata = any(
-            normalize_doi(_extract_explicit_doi(value)) == stored
-            for value in (item.pub_url, item.venue_text)
-        )
-        if in_metadata:
-            return stored
-    pub_url_doi = _extract_doi_candidate(item.pub_url)
-    if pub_url_doi:
-        return normalize_doi(pub_url_doi)
-    return (
+    explicit_doi = (
         _extract_explicit_doi(item.pub_url)
         or _extract_explicit_doi(item.venue_text)
     )
+    if explicit_doi:
+        return explicit_doi
+    pub_url_doi = _extract_doi_candidate(item.pub_url)
+    if pub_url_doi:
+        return normalize_doi(pub_url_doi)
+    return stored
 
 
 def _payload_locations(payload: dict) -> list[dict]:
@@ -217,30 +213,30 @@ async def _resolve_item_payload(
     item: PublicationListItem,
     email: str,
     allow_crossref: bool,
-) -> tuple[dict | None, bool]:
+) -> tuple[dict | None, bool, str | None]:
     doi = _publication_doi(item)
     payload: dict | None = None
     if doi:
         payload = await _fetch_unpaywall_payload_by_doi(client=client, doi=doi, email=email)
         if payload is not None and _has_direct_payload_pdf(payload):
-            return payload, False
+            return payload, False, doi
     if not allow_crossref or not settings.crossref_enabled:
-        return payload, False
+        return payload, False, doi
     crossref_doi = await discover_doi_for_publication(
         item=item,
         max_rows=settings.crossref_max_rows,
         email=email,
     )
     if crossref_doi is None or crossref_doi == doi:
-        return payload, crossref_doi is not None
+        return payload, crossref_doi is not None, doi or crossref_doi
     crossref_payload = await _fetch_unpaywall_payload_by_doi(
         client=client,
         doi=crossref_doi,
         email=email,
     )
     if crossref_payload is not None:
-        return crossref_payload, True
-    return payload, True
+        return crossref_payload, True, crossref_doi
+    return payload, True, crossref_doi
 
 
 async def _doi_and_pdf_from_payload(
@@ -265,10 +261,11 @@ def _outcome_with_failure(
     item: PublicationListItem,
     failure_reason: str,
     used_crossref: bool,
+    doi_override: str | None = None,
 ) -> OaResolutionOutcome:
     return OaResolutionOutcome(
         publication_id=item.publication_id,
-        doi=_publication_doi(item),
+        doi=normalize_doi(doi_override) if doi_override is not None else _publication_doi(item),
         pdf_url=None,
         failure_reason=failure_reason,
         source=None,
@@ -323,7 +320,7 @@ async def _resolve_outcome_for_item(
     email: str,
     allow_crossref: bool,
 ) -> OaResolutionOutcome:
-    payload, used_crossref = await _resolve_item_payload(
+    payload, used_crossref, resolved_doi = await _resolve_item_payload(
         client=client,
         item=item,
         email=email,
@@ -334,6 +331,7 @@ async def _resolve_outcome_for_item(
             item=item,
             failure_reason=_missing_payload_failure_reason(item, used_crossref=used_crossref),
             used_crossref=used_crossref,
+            doi_override=resolved_doi,
         )
     doi, pdf_url = await _doi_and_pdf_from_payload(payload, client=client)
     return _outcome_from_payload(

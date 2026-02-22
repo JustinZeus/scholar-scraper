@@ -2,6 +2,14 @@ import { apiRequest } from "@/lib/api/client";
 
 export type PublicationMode = "all" | "unread" | "latest";
 
+export interface DisplayIdentifier {
+  kind: string;
+  value: string;
+  label: string;
+  url: string | null;
+  confidence_score: number;
+}
+
 export interface PublicationItem {
   publication_id: number;
   scholar_profile_id: number;
@@ -12,6 +20,7 @@ export interface PublicationItem {
   venue_text: string | null;
   pub_url: string | null;
   doi: string | null;
+  display_identifier: DisplayIdentifier | null;
   pdf_url: string | null;
   pdf_status: "untracked" | "queued" | "running" | "resolved" | "failed";
   pdf_attempt_count: number;

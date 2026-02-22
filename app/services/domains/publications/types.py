@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.services.domains.publication_identifiers.types import DisplayIdentifier
+
 
 @dataclass(frozen=True)
 class PublicationListItem:
@@ -24,6 +26,7 @@ class PublicationListItem:
     pdf_attempt_count: int = 0
     pdf_failure_reason: str | None = None
     pdf_failure_detail: str | None = None
+    display_identifier: DisplayIdentifier | None = None
 
 
 @dataclass(frozen=True)
