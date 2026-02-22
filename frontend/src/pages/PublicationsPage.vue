@@ -802,8 +802,13 @@ watch(
 </script>
 
 <template>
-  <AppPage title="Publications" subtitle="Review discoveries, open PDFs, and update read/favorite state in one workspace.">
-    <AppCard class="space-y-4">
+  <AppPage
+    title="Publications"
+    subtitle="Review discoveries, open PDFs, and update read/favorite state in one workspace."
+    fill
+  >
+    <div class="flex min-h-0 flex-1 flex-col gap-4 xl:overflow-hidden">
+      <AppCard class="flex min-h-0 flex-1 flex-col gap-4">
       <div class="grid gap-3 xl:grid-cols-[minmax(0,13rem)_minmax(0,18rem)_minmax(0,1fr)_auto] xl:items-end">
         <div class="grid gap-1 text-xs text-secondary">
           <div class="flex items-center gap-1">
@@ -1116,6 +1121,7 @@ watch(
         </div>
       </div>
     </AppCard>
+    </div>
   </AppPage>
 </template>
 

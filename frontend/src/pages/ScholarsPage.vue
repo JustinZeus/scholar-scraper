@@ -869,7 +869,7 @@ onMounted(() => {
               />
 
               <div v-else class="space-y-3 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:space-y-0 xl:overflow-hidden">
-                <ul class="grid gap-3 lg:hidden">
+                <ul class="flex gap-3 overflow-x-auto p-1 lg:hidden">
                   <li
                     v-for="item in visibleScholars"
                     :key="item.id"
