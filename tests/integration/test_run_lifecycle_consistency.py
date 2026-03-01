@@ -346,6 +346,7 @@ async def test_partial_discovery_exception_keeps_new_pub_count_consistent(
     )
     db_session.add_all([run, publication])
     await db_session.commit()
+    run_id = int(run.id)
 
     call_count = 0
 
@@ -397,7 +398,7 @@ async def test_partial_discovery_exception_keeps_new_pub_count_consistent(
             publications=publications,
         )
 
-    refreshed_run = await db_session.get(CrawlRun, int(run.id))
+    refreshed_run = await db_session.get(CrawlRun, run_id)
     assert refreshed_run is not None
     assert int(refreshed_run.new_pub_count) == 1
     link_count_result = await db_session.execute(
@@ -409,7 +410,7 @@ async def test_partial_discovery_exception_keeps_new_pub_count_consistent(
               AND first_seen_run_id = :run_id
             """
         ),
-        {"scholar_profile_id": scholar_profile_id, "run_id": int(run.id)},
+        {"scholar_profile_id": scholar_profile_id, "run_id": run_id},
     )
     assert int(link_count_result.scalar_one()) == 1
 

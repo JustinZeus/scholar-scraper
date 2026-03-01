@@ -10,7 +10,11 @@ from app.db.models import ScholarProfile
 from app.services.scholar.parser import ScholarParserError, parse_profile_page
 from app.services.scholar.source import ScholarSource
 from app.services.scholars.author_search import search_author_candidates
-from app.services.scholars.constants import ALLOWED_IMAGE_UPLOAD_CONTENT_TYPES
+from app.services.scholars.constants import (
+    ALLOWED_IMAGE_UPLOAD_CONTENT_TYPES,
+    SEARCH_COOLDOWN_REASON,
+    SEARCH_DISABLED_REASON,
+)
 from app.services.scholars.exceptions import ScholarServiceError
 from app.services.scholars.uploads import (
     _ensure_upload_root,
@@ -24,6 +28,8 @@ from app.services.scholars.validators import (
 )
 
 __all__ = [
+    "SEARCH_COOLDOWN_REASON",
+    "SEARCH_DISABLED_REASON",
     "ScholarServiceError",
     "clear_profile_image_customization",
     "create_scholar_for_user",
