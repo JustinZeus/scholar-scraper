@@ -8,7 +8,16 @@
       "Bash(done)",
       "Bash(grep -c 'def test_' tests/unit/*.py tests/unit/**/*.py tests/integration/*.py)",
       "Bash(sort -t: -k2 -rn)",
-      "Bash(wc -l frontend/src/pages/*.vue)"
+      "Bash(wc -l frontend/src/pages/*.vue)",
+      "Bash(uv run ruff format app/api/routers/runs.py app/services/arxiv/rate_limit.py tests/integration/test_run_lifecycle_consistency.py)",
+      "Bash(ruff format app/api/routers/runs.py app/services/arxiv/rate_limit.py tests/integration/test_run_lifecycle_consistency.py)",
+      "Bash(npm install --package-lock-only)",
+      "Bash(python -m ruff format app/api/routers/runs.py app/services/arxiv/rate_limit.py tests/integration/test_run_lifecycle_consistency.py)",
+      "Bash(pip show ruff)",
+      "Bash(pip install ruff)",
+      "Bash(uvx ruff format app/api/routers/runs.py app/services/arxiv/rate_limit.py tests/integration/test_run_lifecycle_consistency.py)",
+      "Bash(git add app/api/routers/runs.py app/services/arxiv/rate_limit.py tests/integration/test_run_lifecycle_consistency.py docs/website/package-lock.json)",
+      "Bash(git push)"
     ],
     "additionalDirectories": [
       "/home/jv/src/personal/playground/scholar_scraper/scholar-scraper/frontend/src"
