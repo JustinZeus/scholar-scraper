@@ -73,8 +73,13 @@ async def lifespan(_: FastAPI):
             )
             await session.commit()
             structured_log(logger, "info", "app.startup_orphaned_runs_cleaned")
-    except Exception as e:
-        logger.error(f"Failed to clean orphaned runs at startup: {e}")
+    except Exception as exc:
+        structured_log(
+            logger,
+            "error",
+            "app.startup_orphaned_runs_cleanup_failed",
+            error=str(exc),
+        )
 
     await scheduler_service.start()
     yield

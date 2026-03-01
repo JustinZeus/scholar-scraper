@@ -8,6 +8,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.logging_utils import structured_log
 from app.services.openalex.types import OpenAlexWork
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,13 @@ class OpenAlexClient:
                 raise OpenAlexBudgetExhaustedError("Daily API budget exhausted; retrying won't help until midnight UTC")
             raise OpenAlexRateLimitError("Rate limit exceeded fetching OpenAlex work by DOI")
         if response.status_code >= 400:
-            logger.warning("OpenAlex API error: %s %s", response.status_code, response.text[:500])
+            structured_log(
+                logger,
+                "warning",
+                "openalex.api_error",
+                status_code=response.status_code,
+                response_preview=response.text[:500],
+            )
             raise OpenAlexClientError(f"API Error {response.status_code}")
 
         data = response.json()
@@ -130,7 +137,14 @@ class OpenAlexClient:
                 raise OpenAlexBudgetExhaustedError("Daily API budget exhausted; retrying won't help until midnight UTC")
             raise OpenAlexRateLimitError("Rate limit exceeded fetching OpenAlex works list")
         if response.status_code >= 400:
-            logger.warning("OpenAlex API error (filters=%s): %s %s", filters, response.status_code, response.text[:500])
+            structured_log(
+                logger,
+                "warning",
+                "openalex.api_error_with_filters",
+                filters=filters,
+                status_code=response.status_code,
+                response_preview=response.text[:500],
+            )
             raise OpenAlexClientError(f"API Error {response.status_code}")
 
         data = response.json()
@@ -140,8 +154,13 @@ class OpenAlexClient:
         for raw_work in results:
             try:
                 parsed_works.append(OpenAlexWork.from_api_dict(raw_work))
-            except Exception as e:
-                logger.warning("Failed to parse OpenAlex raw dict: %s", e)
+            except Exception as exc:
+                structured_log(
+                    logger,
+                    "warning",
+                    "openalex.parse_failed",
+                    error=str(exc),
+                )
                 continue
 
         return parsed_works

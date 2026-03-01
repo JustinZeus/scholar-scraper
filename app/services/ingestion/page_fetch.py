@@ -49,13 +49,13 @@ class PageFetcher:
                 error="source_does_not_support_pagination",
             )
         except Exception as exc:
-            logger.exception(
+            structured_log(
+                logger,
+                "exception",
                 "ingestion.fetch_unexpected_error",
-                extra={
-                    "scholar_id": scholar_id,
-                    "cstart": cstart,
-                    "page_size": page_size,
-                },
+                scholar_id=scholar_id,
+                cstart=cstart,
+                page_size=page_size,
             )
             return FetchResult(
                 requested_url=(

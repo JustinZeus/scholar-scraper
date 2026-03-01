@@ -13,7 +13,27 @@ from app.api.runtime_deps import get_ingestion_service
 from app.db.models import CrawlRun, Publication, RunStatus, RunTriggerType
 from app.main import app
 from app.services.ingestion.application import ScholarIngestionService
+from app.services.ingestion.run_enrichment import background_enrich
+from app.services.scholar.source import FetchResult
 from tests.integration.helpers import insert_user, login_user
+
+
+class _PassthroughSource:
+    """Minimal source that passes preflight without making real requests."""
+
+    async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+        return FetchResult(
+            requested_url=f"https://scholar.google.com/citations?user={scholar_id}",
+            status_code=200,
+            final_url=f"https://scholar.google.com/citations?user={scholar_id}",
+            body="<html></html>",
+            error=None,
+        )
+
+    async def fetch_profile_page_html(
+        self, scholar_id: str, *, cstart: int, pagesize: int
+    ) -> FetchResult:
+        return await self.fetch_profile_html(scholar_id)
 
 
 def _csrf_headers(client: TestClient) -> dict[str, str]:
@@ -81,7 +101,7 @@ async def test_api_manual_run_conflicts_when_an_active_run_exists(
     )
     await db_session.commit()
 
-    service = ScholarIngestionService(source=object())
+    service = ScholarIngestionService(source=_PassthroughSource())
 
     async def _stall_execute_run(**_kwargs: Any) -> None:
         await asyncio.sleep(0.4)
@@ -218,9 +238,12 @@ async def test_background_enrichment_preserves_canceled_status(
         _OpenAlexClientStub,
     )
 
-    service = ScholarIngestionService(source=object())
-    await service._background_enrich(
+    from app.services.ingestion.enrichment import EnrichmentRunner
+
+    enrichment_runner = EnrichmentRunner()
+    await background_enrich(
         session_factory,
+        enrichment_runner,
         run_id=int(run.id),
         intended_final_status=RunStatus.SUCCESS,
     )

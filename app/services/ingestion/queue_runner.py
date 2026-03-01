@@ -229,7 +229,13 @@ class QueueJobRunner:
                 error=str(exc),
             )
             await recovery_session.commit()
-        logger.exception("scheduler.queue_item_run_failed", extra={"queue_item_id": job.id, "user_id": job.user_id})
+        structured_log(
+            logger,
+            "exception",
+            "scheduler.queue_item_run_failed",
+            queue_item_id=job.id,
+            user_id=job.user_id,
+        )
 
     async def _load_request_delay_for_user(self, user_id: int, *, floor: int) -> int:
         session_factory = get_session_factory()

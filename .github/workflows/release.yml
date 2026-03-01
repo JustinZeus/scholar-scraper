@@ -19,9 +19,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install python-semantic-release
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --extra dev
       - name: Semantic Release
         id: release
-        run: semantic-release publish
+        run: uv run semantic-release publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

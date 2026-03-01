@@ -6,12 +6,14 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import DataRepairJob
+from app.services.dbops.application import (
+    REPAIR_STATUS_COMPLETED,
+    REPAIR_STATUS_FAILED,
+    REPAIR_STATUS_PLANNED,
+    REPAIR_STATUS_RUNNING,
+)
 from app.services.publications import dedup as dedup_service
 
-REPAIR_STATUS_PLANNED = "planned"
-REPAIR_STATUS_RUNNING = "running"
-REPAIR_STATUS_COMPLETED = "completed"
-REPAIR_STATUS_FAILED = "failed"
 NEAR_DUP_JOB_NAME = "repair_publication_near_duplicates"
 NEAR_DUP_DEFAULT_MAX_CLUSTERS = 25
 

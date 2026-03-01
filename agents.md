@@ -77,7 +77,7 @@ Types: `feat`, `fix`, `docs`, `ci`, `refactor`, `test`, `chore`, `perf`.
 
 ## 7. Testing & Quality Gates
 
-All commands run inside containers. Do not run bare `npm`, `pytest`, or `ruff` on the host.
+All **local development** commands run inside containers. Do not run bare `npm`, `pytest`, or `ruff` on the host. CI workflows (`.github/workflows/`) use bare runners with `uv` and `npm` directly — this is intentional since CI has no Docker-in-Docker dependency.
 
 ### Backend
 

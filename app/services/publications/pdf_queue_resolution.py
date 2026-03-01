@@ -251,7 +251,7 @@ def _drop_finished_task(task: asyncio.Task[None]) -> None:
     try:
         task.result()
     except Exception:
-        logger.exception("publications.pdf_queue.task_failed")
+        structured_log(logger, "exception", "publications.pdf_queue.task_failed")
 
 
 def schedule_rows(

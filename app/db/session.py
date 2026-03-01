@@ -85,7 +85,7 @@ async def check_database() -> bool:
             result = await conn.execute(text("SELECT 1"))
             return result.scalar_one() == 1
     except Exception:
-        logger.exception("db.healthcheck_failed")
+        structured_log(logger, "exception", "db.healthcheck_failed")
         return False
 
 

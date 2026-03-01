@@ -34,8 +34,8 @@ class AdminUsersListEnvelope(BaseModel):
 
 
 class AdminUserCreateRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=128)
     is_admin: bool = False
 
     model_config = ConfigDict(extra="forbid")
@@ -55,7 +55,7 @@ class AdminUserEnvelope(BaseModel):
 
 
 class AdminResetPasswordRequest(BaseModel):
-    new_password: str
+    new_password: str = Field(max_length=128)
 
     model_config = ConfigDict(extra="forbid")
 

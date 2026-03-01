@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.schemas.common import ApiMeta
 
@@ -44,8 +44,8 @@ class CsrfBootstrapEnvelope(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=128)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -66,8 +66,8 @@ class LoginEnvelope(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
-    confirm_password: str
+    current_password: str = Field(max_length=128)
+    new_password: str = Field(max_length=128)
+    confirm_password: str = Field(max_length=128)
 
     model_config = ConfigDict(extra="forbid")

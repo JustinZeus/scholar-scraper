@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /home/jv/src/personal/playground/scholar_scraper/scholar-scraper/frontend/src/features/settings/SettingsAdminPanel.vue /home/jv/src/personal/playground/scholar_scraper/scholar-scraper/frontend/src/features/settings/components/Admin*.vue)",
+      "Read(//home/jv/src/personal/playground/scholar_scraper/scholar-scraper/**)",
+      "Bash(while read line rest)",
+      "Bash(do echo \"$line $rest\")",
+      "Bash(done)",
+      "Bash(grep -c 'def test_' tests/unit/*.py tests/unit/**/*.py tests/integration/*.py)",
+      "Bash(sort -t: -k2 -rn)",
+      "Bash(wc -l frontend/src/pages/*.vue)"
+    ],
+    "additionalDirectories": [
+      "/home/jv/src/personal/playground/scholar_scraper/scholar-scraper/frontend/src"
+    ]
+  }
+}

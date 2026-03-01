@@ -75,24 +75,31 @@ async def _run_serialized_fetch(
             runtime_state,
             source_path=source_path,
         )
-        response = await fetch()
+        runtime_state.next_allowed_at = datetime.now(UTC) + timedelta(seconds=_min_interval_seconds())
+
+    if wait_seconds > 0:
+        await asyncio.sleep(wait_seconds)
+    response = await fetch()
+
+    async with session_factory() as db_session, db_session.begin():
+        runtime_state = await _load_runtime_state_for_update(db_session)
         hit_rate_limit = _record_post_response_state(
             runtime_state,
             response_status=int(response.status_code),
             source_path=source_path,
         )
-        structured_log(
-            logger,
-            "info",
-            "arxiv.request_completed",
-            status_code=int(response.status_code),
-            wait_seconds=wait_seconds,
-            cooldown_remaining_seconds=_cooldown_remaining_seconds(
-                runtime_state.cooldown_until, now_utc=datetime.now(UTC)
-            ),
-            source_path=source_path,
-        )
-        return response, hit_rate_limit
+    structured_log(
+        logger,
+        "info",
+        "arxiv.request_completed",
+        status_code=int(response.status_code),
+        wait_seconds=wait_seconds,
+        cooldown_remaining_seconds=_cooldown_remaining_seconds(
+            runtime_state.cooldown_until, now_utc=datetime.now(UTC)
+        ),
+        source_path=source_path,
+    )
+    return response, hit_rate_limit
 
 
 async def _acquire_arxiv_lock(db_session: AsyncSession) -> None:
@@ -144,8 +151,6 @@ async def _wait_for_allowed_slot_or_raise(
         source_path=source_path,
         cooldown_remaining_seconds=0.0,
     )
-    if wait_seconds > 0:
-        await asyncio.sleep(wait_seconds)
     return wait_seconds
 
 

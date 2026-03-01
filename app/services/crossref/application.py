@@ -350,7 +350,8 @@ async def _fetch_items(
             ),
             timeout=timeout,
         )
-    except Exception:
+    except Exception as exc:
+        structured_log(logger, "warning", "crossref.fetch_failed", error=str(exc))
         return []
 
 

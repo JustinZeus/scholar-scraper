@@ -138,9 +138,11 @@ async def recover_integrity_error(
     original_exc: IntegrityError,
 ) -> dict[str, Any]:
     if idempotency_key is None:
-        logger.exception(
+        structured_log(
+            logger,
+            "exception",
             "api.runs.manual_integrity_error",
-            extra={"user_id": user_id},
+            user_id=user_id,
         )
         raise ApiException(status_code=500, code="manual_run_failed", message="Manual run failed.") from original_exc
     existing_run = await run_service.get_manual_run_by_idempotency_key(
@@ -149,9 +151,11 @@ async def recover_integrity_error(
         idempotency_key=idempotency_key,
     )
     if existing_run is None:
-        logger.exception(
+        structured_log(
+            logger,
+            "exception",
             "api.runs.manual_integrity_error",
-            extra={"user_id": user_id},
+            user_id=user_id,
         )
         raise ApiException(status_code=500, code="manual_run_failed", message="Manual run failed.") from original_exc
     if existing_run.status in (RunStatus.RUNNING, RunStatus.RESOLVING):
@@ -230,8 +234,10 @@ def raise_manual_blocked_safety(*, exc, user_id: int) -> None:
 
 
 def raise_manual_failed(*, exc: Exception, user_id: int) -> None:
-    logger.exception(
+    structured_log(
+        logger,
+        "exception",
         "api.runs.manual_failed",
-        extra={"user_id": user_id},
+        user_id=user_id,
     )
     raise ApiException(status_code=500, code="manual_run_failed", message="Manual run failed.") from exc

@@ -96,7 +96,7 @@ class EnrichmentRunner:
 
         for p in batch:
             if await self.run_is_canceled(db_session, run_id=run_id):
-                logger.info("ingestion.enrichment_aborted", extra={"run_id": run_id})
+                structured_log(logger, "info", "ingestion.enrichment_aborted", run_id=run_id)
                 return False, arxiv_lookup_allowed
             p.openalex_last_attempt_at = now
             arxiv_lookup_allowed = await self._discover_identifiers_for_enrichment(
@@ -112,9 +112,9 @@ class EnrichmentRunner:
                 candidates=openalex_works,
             )
             if match:
-                p.year = match.publication_year or p.year
-                p.citation_count = match.cited_by_count or p.citation_count
-                p.pdf_url = match.oa_url or p.pdf_url
+                p.year = match.publication_year if match.publication_year is not None else p.year
+                p.citation_count = match.cited_by_count if match.cited_by_count is not None else p.citation_count
+                p.pdf_url = match.oa_url if match.oa_url is not None else p.pdf_url
                 p.openalex_enriched = True
         return True, arxiv_lookup_allowed
 
@@ -162,7 +162,7 @@ class EnrichmentRunner:
 
         for i in range(0, len(publications), batch_size):
             if await self.run_is_canceled(db_session, run_id=run_id):
-                logger.info("ingestion.enrichment_aborted", extra={"run_id": run_id})
+                structured_log(logger, "info", "ingestion.enrichment_aborted", run_id=run_id)
                 return
             batch = publications[i : i + batch_size]
             titles = _sanitize_titles(batch)
@@ -181,6 +181,8 @@ class EnrichmentRunner:
                 continue
             except Exception as e:
                 structured_log(logger, "warning", "ingestion.openalex_enrichment_failed", error=str(e), run_id=run_id)
+                for p in batch:
+                    p.openalex_last_attempt_at = now
                 continue
             should_continue, arxiv_lookup_allowed = await self._enrich_batch(
                 db_session,
@@ -302,9 +304,13 @@ class EnrichmentRunner:
                     {"title.search": "|".join(titles)}, limit=batch_size * 3
                 )
             except Exception as e:
-                logger.warning(
+                structured_log(
+                    logger,
+                    "warning",
                     "ingestion.openalex_enrichment_failed",
-                    extra={"error": str(e), "batch_size": len(batch), "scholar_id": scholar.id},
+                    error=str(e),
+                    batch_size=len(batch),
+                    scholar_id=scholar.id,
                 )
                 openalex_works = []
 
@@ -320,11 +326,11 @@ class EnrichmentRunner:
                         title=p.title,
                         title_url=p.title_url,
                         cluster_id=p.cluster_id,
-                        year=match.publication_year or p.year,
-                        citation_count=match.cited_by_count,
+                        year=match.publication_year if match.publication_year is not None else p.year,
+                        citation_count=match.cited_by_count if match.cited_by_count is not None else p.citation_count,
                         authors_text=p.authors_text,
                         venue_text=p.venue_text,
-                        pdf_url=match.oa_url or p.pdf_url,
+                        pdf_url=match.oa_url if match.oa_url is not None else p.pdf_url,
                     )
                     enriched.append(new_p)
                 else:

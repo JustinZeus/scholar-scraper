@@ -6,9 +6,10 @@ from urllib.parse import parse_qs
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.responses import PlainTextResponse, Response
 from starlette.types import Message
 
+from app.api.responses import error_response
 from app.logging_utils import structured_log
 
 CSRF_SESSION_KEY = "csrf_token"
@@ -88,7 +89,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         content_type = request.headers.get("content-type", "")
         if not content_type.startswith("application/x-www-form-urlencoded"):
             return None
-        parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        try:
+            parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        except (UnicodeDecodeError, ValueError):
+            return None
         values = parsed.get(CSRF_FORM_FIELD)
         if not values:
             return None
@@ -114,19 +118,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         message: str,
     ) -> Response:
         if request.url.path.startswith("/api/"):
-            request_state = getattr(request, "state", None)
-            request_id = getattr(request_state, "request_id", None) if request_state else None
-            return JSONResponse(
-                {
-                    "error": {
-                        "code": code,
-                        "message": message,
-                        "details": None,
-                    },
-                    "meta": {
-                        "request_id": request_id,
-                    },
-                },
+            return error_response(
+                request,
                 status_code=403,
+                code=code,
+                message=message,
+                details=None,
             )
         return PlainTextResponse(message, status_code=403)

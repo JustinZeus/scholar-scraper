@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -17,21 +16,28 @@ from app.db.models import (
 )
 from app.logging_utils import structured_log
 from app.services.ingestion import queue as queue_service
-from app.services.ingestion import safety as run_safety_service
 from app.services.ingestion.constants import RUN_LOCK_NAMESPACE
 from app.services.ingestion.enrichment import EnrichmentRunner
 from app.services.ingestion.pagination import PaginationEngine
-from app.services.ingestion.preflight import check_scholar_reachable
 from app.services.ingestion.run_completion import (
     complete_run_for_user,
     int_or_default,
+    log_run_completed,
     run_execution_summary,
+)
+from app.services.ingestion.run_enrichment import (
+    inline_enrich_and_finalize,
+    spawn_background_enrichment_task,
+)
+from app.services.ingestion.run_guards import (
+    load_user_settings_for_run,
+    run_preflight_guard,
 )
 from app.services.ingestion.scholar_processing import run_scholar_iteration
 from app.services.ingestion.types import (
     RunAlertSummary,
     RunAlreadyInProgressError,
-    RunBlockedBySafetyPolicyError,
+    RunBlockedBySafetyPolicyError,  # noqa: F401 (re-exported)
     RunFailureSummary,
     RunProgress,
 )
@@ -41,8 +47,6 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 ACTIVE_RUN_INDEX_NAME = "uq_crawl_runs_user_active"
-
-_background_tasks: set[asyncio.Task[Any]] = set()
 
 
 def _is_active_run_integrity_error(exc: IntegrityError) -> bool:
@@ -97,34 +101,6 @@ def _threshold_kwargs(
     }
 
 
-def _log_run_completed(
-    *,
-    run: CrawlRun,
-    user_id: int,
-    scholars: list[ScholarProfile],
-    progress: RunProgress,
-    failure_summary: RunFailureSummary,
-    alert_summary: RunAlertSummary,
-) -> None:
-    structured_log(
-        logger,
-        "info",
-        "ingestion.run_completed",
-        user_id=user_id,
-        crawl_run_id=run.id,
-        status=run.status.value,
-        scholar_count=len(scholars),
-        succeeded_count=progress.succeeded_count,
-        failed_count=progress.failed_count,
-        partial_count=progress.partial_count,
-        new_publication_count=run.new_pub_count,
-        blocked_failure_count=alert_summary.blocked_failure_count,
-        network_failure_count=alert_summary.network_failure_count,
-        retries_scheduled_count=failure_summary.retries_scheduled_count,
-        alert_flags=alert_summary.alert_flags,
-    )
-
-
 class ScholarIngestionService:
     def __init__(self, *, source: ScholarSource) -> None:
         self._source = source
@@ -137,78 +113,6 @@ class ScholarIngestionService:
             settings.ingestion_min_request_delay_seconds
         )
         return max(policy_minimum, int_or_default(value, policy_minimum))
-
-    async def _load_user_settings_for_run(
-        self,
-        db_session: AsyncSession,
-        *,
-        user_id: int,
-        trigger_type: RunTriggerType,
-    ):
-        user_settings = await user_settings_service.get_or_create_settings(db_session, user_id=user_id)
-        await self._enforce_safety_gate(
-            db_session, user_settings=user_settings, user_id=user_id, trigger_type=trigger_type
-        )
-        return user_settings
-
-    async def _enforce_safety_gate(
-        self,
-        db_session: AsyncSession,
-        *,
-        user_settings,
-        user_id: int,
-        trigger_type: RunTriggerType,
-    ) -> None:
-        now_utc = datetime.now(UTC)
-        previous = run_safety_service.get_safety_event_context(user_settings, now_utc=now_utc)
-        if run_safety_service.clear_expired_cooldown(user_settings, now_utc=now_utc):
-            await db_session.commit()
-            await db_session.refresh(user_settings)
-            structured_log(
-                logger,
-                "info",
-                "ingestion.cooldown_cleared",
-                user_id=user_id,
-                reason=previous.get("cooldown_reason"),
-                cooldown_until=previous.get("cooldown_until"),
-            )
-            now_utc = datetime.now(UTC)
-        if run_safety_service.is_cooldown_active(user_settings, now_utc=now_utc):
-            await self._raise_safety_blocked_start(
-                db_session,
-                user_settings=user_settings,
-                user_id=user_id,
-                trigger_type=trigger_type,
-                now_utc=now_utc,
-            )
-
-    async def _raise_safety_blocked_start(
-        self,
-        db_session: AsyncSession,
-        *,
-        user_settings,
-        user_id: int,
-        trigger_type: RunTriggerType,
-        now_utc: datetime,
-    ) -> None:
-        safety_state = run_safety_service.register_cooldown_blocked_start(user_settings, now_utc=now_utc)
-        await db_session.commit()
-        structured_log(
-            logger,
-            "warning",
-            "ingestion.safety_policy_blocked_run_start",
-            user_id=user_id,
-            trigger_type=trigger_type.value,
-            reason=safety_state.get("cooldown_reason"),
-            cooldown_until=safety_state.get("cooldown_until"),
-            cooldown_remaining_seconds=safety_state.get("cooldown_remaining_seconds"),
-            blocked_start_count=((safety_state.get("counters") or {}).get("blocked_start_count")),
-        )
-        raise RunBlockedBySafetyPolicyError(
-            code="scrape_cooldown_active",
-            message="Scrape safety cooldown is active; run start is temporarily blocked.",
-            safety_state=safety_state,
-        )
 
     async def _load_target_scholars(
         self,
@@ -232,49 +136,6 @@ class ScholarIngestionService:
                 await queue_service.clear_job_for_scholar(db_session, user_id=user_id, scholar_profile_id=sid)
         return scholars
 
-    async def _run_preflight_guard(
-        self,
-        db_session: AsyncSession,
-        *,
-        user_settings: Any,
-        user_id: int,
-        scholars: list[ScholarProfile],
-    ) -> None:
-        if not scholars:
-            return
-        result = await check_scholar_reachable(
-            self._source,
-            scholar_id=scholars[0].scholar_id,
-        )
-        if result.passed:
-            return
-        now_utc = datetime.now(UTC)
-        safety_state, _ = run_safety_service.apply_run_safety_outcome(
-            user_settings,
-            run_id=0,
-            blocked_failure_count=1,
-            network_failure_count=0,
-            blocked_failure_threshold=1,
-            network_failure_threshold=1,
-            blocked_cooldown_seconds=settings.ingestion_safety_cooldown_blocked_seconds,
-            network_cooldown_seconds=settings.ingestion_safety_cooldown_network_seconds,
-            now_utc=now_utc,
-        )
-        await db_session.commit()
-        structured_log(
-            logger,
-            "warning",
-            "ingestion.cooldown_entered_preflight",
-            user_id=user_id,
-            block_reason=result.block_reason,
-            cooldown_until=safety_state.get("cooldown_until"),
-        )
-        raise RunBlockedBySafetyPolicyError(
-            code="scrape_cooldown_active",
-            message=f"Preflight detected Scholar block ({result.block_reason}). Cooldown activated.",
-            safety_state=safety_state,
-        )
-
     async def _initialize_run_for_user(
         self,
         db_session: AsyncSession,
@@ -287,7 +148,7 @@ class ScholarIngestionService:
         threshold_kwargs: dict[str, Any],
         idempotency_key: str | None,
     ) -> tuple[Any, CrawlRun, list[ScholarProfile], dict[int, int]]:
-        user_settings = await self._load_user_settings_for_run(
+        user_settings = await load_user_settings_for_run(
             db_session,
             user_id=user_id,
             trigger_type=trigger_type,
@@ -301,8 +162,9 @@ class ScholarIngestionService:
             user_id=user_id,
             filtered_scholar_ids=filtered_scholar_ids,
         )
-        await self._run_preflight_guard(
+        await run_preflight_guard(
             db_session,
+            self._source,
             user_settings=user_settings,
             user_id=user_id,
             scholars=scholars,
@@ -486,7 +348,7 @@ class ScholarIngestionService:
                 if intended_final_status not in (RunStatus.CANCELED,):
                     run.status = RunStatus.RESOLVING
                 await db_session.commit()
-                _log_run_completed(
+                log_run_completed(
                     run=run,
                     user_id=user_id,
                     scholars=attached_scholars,
@@ -495,19 +357,22 @@ class ScholarIngestionService:
                     alert_summary=alert_summary,
                 )
                 if intended_final_status not in (RunStatus.CANCELED,):
-                    task = asyncio.create_task(
-                        self._background_enrich(
-                            session_factory,
-                            run_id=run.id,
-                            intended_final_status=intended_final_status,
-                            openalex_api_key=getattr(user_settings, "openalex_api_key", None),
-                        )
+                    spawn_background_enrichment_task(
+                        session_factory,
+                        self._enrichment,
+                        run_id=run.id,
+                        intended_final_status=intended_final_status,
+                        openalex_api_key=getattr(user_settings, "openalex_api_key", None),
                     )
-                    _background_tasks.add(task)
-                    task.add_done_callback(_background_tasks.discard)
             except Exception as exc:
                 await db_session.rollback()
-                logger.exception("ingestion.background_run_failed", extra={"run_id": run_id, "user_id": user_id})
+                structured_log(
+                    logger,
+                    "exception",
+                    "ingestion.background_run_failed",
+                    run_id=run_id,
+                    user_id=user_id,
+                )
                 await self._fail_run_in_background(session_factory, run_id, exc)
 
     async def _prepare_execute_run(
@@ -530,47 +395,21 @@ class ScholarIngestionService:
         return run, user_settings, list(scholars_result.scalars().all())
 
     async def _fail_run_in_background(self, session_factory: Any, run_id: int, exc: Exception) -> None:
-        async with session_factory() as cleanup_session:
-            run_to_fail = await cleanup_session.get(CrawlRun, run_id)
-            if run_to_fail:
-                run_to_fail.status = RunStatus.FAILED
-                run_to_fail.end_dt = datetime.now(UTC)
-                run_to_fail.error_log["terminal_exception"] = str(exc)
-                await cleanup_session.commit()
-
-    async def _background_enrich(
-        self,
-        session_factory: Any,
-        *,
-        run_id: int,
-        intended_final_status: RunStatus,
-        openalex_api_key: str | None = None,
-    ) -> None:
         try:
-            async with session_factory() as session:
-                await self._enrichment.enrich_pending_publications(
-                    session,
-                    run_id=run_id,
-                    openalex_api_key=openalex_api_key,
-                )
-                run = await session.get(CrawlRun, run_id)
-                if run is not None and run.status == RunStatus.RESOLVING:
-                    run.status = intended_final_status
-                await session.commit()
-                logger.info(
-                    "ingestion.background_enrichment_complete",
-                    extra={"run_id": run_id, "final_status": str(intended_final_status)},
-                )
+            async with session_factory() as cleanup_session:
+                run_to_fail = await cleanup_session.get(CrawlRun, run_id)
+                if run_to_fail:
+                    run_to_fail.status = RunStatus.FAILED
+                    run_to_fail.end_dt = datetime.now(UTC)
+                    run_to_fail.error_log["terminal_exception"] = str(exc)
+                    await cleanup_session.commit()
         except Exception:
-            logger.exception("ingestion.background_enrichment_failed", extra={"run_id": run_id})
-            try:
-                async with session_factory() as fallback_session:
-                    run = await fallback_session.get(CrawlRun, run_id)
-                    if run is not None and run.status == RunStatus.RESOLVING:
-                        run.status = intended_final_status
-                    await fallback_session.commit()
-            except Exception:
-                logger.exception("ingestion.background_enrichment_fallback_failed", extra={"run_id": run_id})
+            structured_log(
+                logger,
+                "exception",
+                "ingestion.fail_run_cleanup_failed",
+                run_id=run_id,
+            )
 
     async def run_for_user(
         self,
@@ -626,7 +465,7 @@ class ScholarIngestionService:
             alert_network_failure_threshold=alert_network_failure_threshold,
             alert_retry_scheduled_threshold=alert_retry_scheduled_threshold,
         )
-        progress, failure_summary, alert_summary = await self._run_iteration_and_complete(
+        progress, failure_summary, alert_summary, intended_final_status = await self._run_iteration_and_complete(
             db_session,
             run=run,
             scholars=scholars,
@@ -639,10 +478,14 @@ class ScholarIngestionService:
             idempotency_key=idempotency_key,
         )
         user_settings = await user_settings_service.get_or_create_settings(db_session, user_id=user_id)
-        await self._inline_enrich_and_finalize(
-            db_session, run=run, user_settings=user_settings, intended_final_status=run.status
+        await inline_enrich_and_finalize(
+            db_session,
+            self._enrichment,
+            run=run,
+            user_settings=user_settings,
+            intended_final_status=intended_final_status,
         )
-        _log_run_completed(
+        log_run_completed(
             run=run,
             user_id=user_id,
             scholars=scholars,
@@ -665,7 +508,7 @@ class ScholarIngestionService:
         auto_queue_continuations: bool,
         queue_delay_seconds: int,
         idempotency_key: str | None,
-    ) -> tuple[RunProgress, RunFailureSummary, RunAlertSummary]:
+    ) -> tuple[RunProgress, RunFailureSummary, RunAlertSummary, RunStatus]:
         progress = await run_scholar_iteration(
             db_session,
             pagination=self._pagination,
@@ -691,27 +534,7 @@ class ScholarIngestionService:
         if intended_final_status not in (RunStatus.CANCELED,):
             run.status = RunStatus.RESOLVING
         await db_session.commit()
-        return progress, failure_summary, alert_summary
-
-    async def _inline_enrich_and_finalize(
-        self,
-        db_session: AsyncSession,
-        *,
-        run: CrawlRun,
-        user_settings: Any,
-        intended_final_status: RunStatus,
-    ) -> None:
-        try:
-            await self._enrichment.enrich_pending_publications(
-                db_session,
-                run_id=run.id,
-                openalex_api_key=getattr(user_settings, "openalex_api_key", None),
-            )
-        except Exception:
-            logger.exception("ingestion.enrichment_failed", extra={"run_id": run.id})
-        if run.status == RunStatus.RESOLVING:
-            run.status = intended_final_status
-        await db_session.commit()
+        return progress, failure_summary, alert_summary, intended_final_status
 
     async def _try_acquire_user_lock(
         self,

@@ -393,7 +393,7 @@ async def resolve_publication_oa_outcomes(
         return {}
     email = _email_for_request(request_email)
     if email is None:
-        logger.debug("unpaywall.resolve_skipped_missing_email")
+        structured_log(logger, "debug", "unpaywall.resolve_skipped_missing_email")
         return {}
     import httpx
 

@@ -131,7 +131,10 @@ def parse_citation_count(parts: list[str]) -> int | None:
     text = normalize_space(" ".join(parts))
     if not text:
         return 0
-    digits = re.sub(r"\D+", "", text)
+    match = re.search(r"[\d,]+", text)
+    if not match:
+        return None
+    digits = match.group(0).replace(",", "")
     if not digits:
         return None
     return int(digits)

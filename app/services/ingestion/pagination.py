@@ -353,6 +353,9 @@ class PaginationEngine:
                 page_attempt_log=next_attempt_log,
             )
 
+            if self._handle_page_state_transition(state=state):
+                return
+
             if next_parsed_page.publications:
                 await self._upsert_page_publications(
                     db_session,
@@ -363,9 +366,6 @@ class PaginationEngine:
                     state=state,
                     upsert_publications_fn=upsert_publications_fn,
                 )
-
-            if self._handle_page_state_transition(state=state):
-                return
 
     @staticmethod
     def _result_from_pagination_state(

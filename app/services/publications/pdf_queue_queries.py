@@ -16,13 +16,12 @@ from app.db.models import (
 )
 from app.services.publication_identifiers import application as identifier_service
 from app.services.publication_identifiers.types import DisplayIdentifier
+from app.services.publications.pdf_queue_common import (
+    PDF_STATUS_QUEUED,
+    PDF_STATUS_RUNNING,
+    PDF_STATUS_UNTRACKED,
+)
 from app.services.publications.types import PublicationListItem
-
-PDF_STATUS_UNTRACKED = "untracked"
-PDF_STATUS_QUEUED = "queued"
-PDF_STATUS_RUNNING = "running"
-PDF_STATUS_RESOLVED = "resolved"
-PDF_STATUS_FAILED = "failed"
 
 
 def _bounded_limit(limit: int, *, max_value: int = 500) -> int:

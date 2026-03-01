@@ -4,6 +4,8 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from app.logging_utils import structured_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,7 +19,13 @@ class RunEventPublisher:
             self._subscribers[run_id] = set()
         queue: asyncio.Queue[Any] = asyncio.Queue()
         self._subscribers[run_id].add(queue)
-        logger.debug(f"New subscriber for run {run_id}. Total: {len(self._subscribers[run_id])}")
+        structured_log(
+            logger,
+            "debug",
+            "runs.event_subscriber_added",
+            run_id=run_id,
+            subscriber_count=len(self._subscribers[run_id]),
+        )
         return queue
 
     def unsubscribe(self, run_id: int, queue: asyncio.Queue) -> None:
@@ -37,7 +45,12 @@ class RunEventPublisher:
             try:
                 queue.put_nowait(message)
             except asyncio.QueueFull:
-                logger.warning(f"Subscriber queue full for run {run_id}, dropping message")
+                structured_log(
+                    logger,
+                    "warning",
+                    "runs.event_subscriber_queue_full",
+                    run_id=run_id,
+                )
 
 
 run_events = RunEventPublisher()
@@ -54,7 +67,12 @@ async def event_generator(run_id: int) -> AsyncGenerator[str, None]:
             data_str = json.dumps(message["data"])
             yield f"event: {event_type}\ndata: {data_str}\n\n"
     except asyncio.CancelledError:
-        logger.debug(f"Client disconnected from SSE stream for run {run_id}")
+        structured_log(
+            logger,
+            "debug",
+            "runs.event_stream_disconnected",
+            run_id=run_id,
+        )
         raise
     finally:
         run_events.unsubscribe(run_id, queue)

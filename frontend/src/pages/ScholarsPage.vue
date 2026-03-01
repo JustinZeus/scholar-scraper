@@ -4,14 +4,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AppPage from "@/components/layout/AppPage.vue";
 import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
 import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
-import AppAlert from "@/components/ui/AppAlert.vue";
-import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppInput from "@/components/ui/AppInput.vue";
-import AppModal from "@/components/ui/AppModal.vue";
 import AppRefreshButton from "@/components/ui/AppRefreshButton.vue";
 import AppSelect from "@/components/ui/AppSelect.vue";
 import AppTable from "@/components/ui/AppTable.vue";
@@ -22,7 +19,6 @@ import {
   exportScholarData,
   importScholarData,
   listScholars,
-  searchScholarsByName,
   setScholarImageUrl,
   toggleScholar,
   uploadScholarImage,
@@ -30,15 +26,16 @@ import {
   type DataImportResult,
   type ScholarProfile,
   type ScholarSearchCandidate,
-  type ScholarSearchResult,
 } from "@/features/scholars";
 import ScholarAvatar from "@/features/scholars/components/ScholarAvatar.vue";
+import ScholarBatchAdd from "@/features/scholars/components/ScholarBatchAdd.vue";
+import ScholarNameSearch from "@/features/scholars/components/ScholarNameSearch.vue";
+import ScholarSettingsModal from "@/features/scholars/components/ScholarSettingsModal.vue";
 import { ApiRequestError } from "@/lib/api/errors";
 import { useRunStatusStore } from "@/stores/run_status";
 
 const loading = ref(true);
 const saving = ref(false);
-const searchingByName = ref(false);
 const activeScholarId = ref<number | null>(null);
 const imageSavingScholarId = ref<number | null>(null);
 const imageUploadingScholarId = ref<number | null>(null);
@@ -50,170 +47,306 @@ const importFileInput = ref<HTMLInputElement | null>(null);
 
 const scholars = ref<ScholarProfile[]>([]);
 const imageUrlDraftByScholarId = ref<Record<number, string>>({});
-
-const scholarBatchInput = ref("");
-const searchQuery = ref("");
 const trackedFilterQuery = ref("");
 type TrackedScholarSort = "recent" | "name_asc" | "name_desc" | "enabled_first";
 const trackedSort = ref<TrackedScholarSort>("recent");
-const searchResult = ref<ScholarSearchResult | null>(null);
-const searchErrorMessage = ref<string | null>(null);
-const searchErrorRequestId = ref<string | null>(null);
 
 const errorMessage = ref<string | null>(null);
 const errorRequestId = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 
-const SCHOLAR_ID_PATTERN = /^[a-zA-Z0-9_-]{12}$/;
-const URL_USER_PARAM_PATTERN = /(?:\?|&)user=([a-zA-Z0-9_-]{12})(?:&|#|$)/i;
-const nameSearchWip = true;
 const SCHOLARS_LIVE_SYNC_INTERVAL_MS = 4000;
 let scholarsLiveSyncTimer: ReturnType<typeof setInterval> | null = null;
-
 const runStatus = useRunStatusStore();
 
-const trackedScholarIds = computed(() => new Set(scholars.value.map((item) => item.scholar_id)));
-const activeScholarSettings = computed(
-  () => scholars.value.find((item) => item.id === activeScholarSettingsId.value) ?? null,
-);
-const hasTrackedScholars = computed(() => scholars.value.length > 0);
-const parsedBatchCount = computed(() => parseScholarIds(scholarBatchInput.value).length);
-const searchHasRun = computed(() => searchResult.value !== null);
-const searchIsDegraded = computed(() => {
-  if (!searchResult.value) {
-    return false;
-  }
-  return searchResult.value.state === "blocked_or_captcha" || searchResult.value.state === "network_error";
-});
-const searchStateTone = computed(() => {
-  const result = searchResult.value;
-  if (!result) {
-    return "neutral" as const;
-  }
-  if (result.state === "ok") {
-    return "success" as const;
-  }
-  if (result.state === "blocked_or_captcha" || result.state === "network_error") {
-    return "warning" as const;
-  }
-  return "neutral" as const;
-});
-const emptySearchCandidates = computed(() => {
-  const result = searchResult.value;
-  if (!result) {
-    return false;
-  }
-  return result.candidates.length === 0;
-});
-const normalizedTrackedFilter = computed(() => trackedFilterQuery.value.trim().toLocaleLowerCase());
-const visibleScholars = computed(() => {
-  const filter = normalizedTrackedFilter.value;
-  const filtered = scholars.value.filter((item) => {
-    if (!filter) {
-      return true;
-    }
-    const label = scholarLabel(item).toLocaleLowerCase();
-    const scholarId = item.scholar_id.toLocaleLowerCase();
-    return label.includes(filter) || scholarId.includes(filter);
-  });
+// --- Helpers ---
 
-  const byName = (a: ScholarProfile, b: ScholarProfile) =>
-    scholarLabel(a).localeCompare(scholarLabel(b), undefined, { sensitivity: "base" });
-
-  const sorted = [...filtered];
-  if (trackedSort.value === "name_asc") {
-    sorted.sort(byName);
-    return sorted;
-  }
-  if (trackedSort.value === "name_desc") {
-    sorted.sort((a, b) => byName(b, a));
-    return sorted;
-  }
-  if (trackedSort.value === "enabled_first") {
-    sorted.sort((a, b) => {
-      if (a.is_enabled !== b.is_enabled) {
-        return a.is_enabled ? -1 : 1;
-      }
-      return byName(a, b);
-    });
-    return sorted;
-  }
-
-  sorted.sort((a, b) => b.id - a.id);
-  return sorted;
-});
-const hasVisibleScholars = computed(() => visibleScholars.value.length > 0);
-const trackedCountLabel = computed(() => {
-  if (!normalizedTrackedFilter.value) {
-    return `${scholars.value.length} tracked`;
-  }
-  return `${visibleScholars.value.length} of ${scholars.value.length}`;
-});
+function scholarLabel(profile: ScholarProfile): string {
+  return profile.display_name || profile.scholar_id;
+}
 
 function scholarProfileUrl(scholarId: string): string {
   return `https://scholar.google.com/citations?hl=en&user=${encodeURIComponent(scholarId)}`;
 }
 
 function scholarPublicationsRoute(profile: ScholarProfile): { name: string; query: { scholar: string } } {
-  return {
-    name: "publications",
-    query: { scholar: String(profile.id) },
-  };
+  return { name: "publications", query: { scholar: String(profile.id) } };
 }
 
-function parseScholarIds(raw: string): string[] {
-  const ordered: string[] = [];
-  const seen = new Set<string>();
+function isImageBusy(scholarProfileId: number): boolean {
+  return imageSavingScholarId.value === scholarProfileId
+    || imageUploadingScholarId.value === scholarProfileId
+    || activeScholarId.value === scholarProfileId;
+}
 
-  const tokens = raw
-    .split(/[\s,;]+/)
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
+// --- Scholar list management ---
 
-  for (const token of tokens) {
-    let candidate: string | null = null;
+const trackedScholarIds = computed(() => new Set(scholars.value.map((item) => item.scholar_id)));
+const activeScholarSettings = computed(
+  () => scholars.value.find((item) => item.id === activeScholarSettingsId.value) ?? null,
+);
+const hasTrackedScholars = computed(() => scholars.value.length > 0);
 
-    if (SCHOLAR_ID_PATTERN.test(token)) {
-      candidate = token;
-    }
-
-    if (!candidate) {
-      const directParamMatch = token.match(URL_USER_PARAM_PATTERN);
-      if (directParamMatch) {
-        candidate = directParamMatch[1];
-      }
-    }
-
-    if (!candidate && token.includes("scholar.google")) {
-      try {
-        const parsed = new URL(token);
-        const userParam = parsed.searchParams.get("user");
-        if (userParam && SCHOLAR_ID_PATTERN.test(userParam)) {
-          candidate = userParam;
-        }
-      } catch (_error) {
-        // Ignore non-URL tokens.
-      }
-    }
-
-    if (!candidate || seen.has(candidate)) {
-      continue;
-    }
-
-    seen.add(candidate);
-    ordered.push(candidate);
+const normalizedTrackedFilter = computed(() => trackedFilterQuery.value.trim().toLocaleLowerCase());
+const visibleScholars = computed(() => {
+  const filter = normalizedTrackedFilter.value;
+  const filtered = scholars.value.filter((item) => {
+    if (!filter) return true;
+    return scholarLabel(item).toLocaleLowerCase().includes(filter)
+      || item.scholar_id.toLocaleLowerCase().includes(filter);
+  });
+  const byName = (a: ScholarProfile, b: ScholarProfile) =>
+    scholarLabel(a).localeCompare(scholarLabel(b), undefined, { sensitivity: "base" });
+  const sorted = [...filtered];
+  if (trackedSort.value === "name_asc") { sorted.sort(byName); return sorted; }
+  if (trackedSort.value === "name_desc") { sorted.sort((a, b) => byName(b, a)); return sorted; }
+  if (trackedSort.value === "enabled_first") {
+    sorted.sort((a, b) => {
+      if (a.is_enabled !== b.is_enabled) return a.is_enabled ? -1 : 1;
+      return byName(a, b);
+    });
+    return sorted;
   }
+  sorted.sort((a, b) => b.id - a.id);
+  return sorted;
+});
+const hasVisibleScholars = computed(() => visibleScholars.value.length > 0);
+const trackedCountLabel = computed(() => {
+  if (!normalizedTrackedFilter.value) return `${scholars.value.length} tracked`;
+  return `${visibleScholars.value.length} of ${scholars.value.length}`;
+});
 
-  return ordered;
+// --- Image draft sync ---
+
+function syncImageDrafts(): void {
+  const next: Record<number, string> = {};
+  for (const item of scholars.value) {
+    const existing = imageUrlDraftByScholarId.value[item.id];
+    if (typeof existing === "string" && existing.length > 0) { next[item.id] = existing; continue; }
+    next[item.id] = item.profile_image_source === "override" ? (item.profile_image_url ?? "") : "";
+  }
+  imageUrlDraftByScholarId.value = next;
 }
 
-function scholarLabel(profile: ScholarProfile): string {
-  return profile.display_name || profile.scholar_id;
+function applyScholarList(nextScholars: ScholarProfile[]): void {
+  scholars.value = nextScholars;
+  syncImageDrafts();
 }
+
+function upsertScholar(profile: ScholarProfile): void {
+  const existingIndex = scholars.value.findIndex((item) => item.id === profile.id);
+  if (existingIndex < 0) { applyScholarList([profile, ...scholars.value]); return; }
+  const next = [...scholars.value];
+  next[existingIndex] = profile;
+  applyScholarList(next);
+}
+
+// --- Live sync ---
+
+function stopScholarLiveSync(): void {
+  if (scholarsLiveSyncTimer === null) return;
+  clearInterval(scholarsLiveSyncTimer);
+  scholarsLiveSyncTimer = null;
+}
+
+function startScholarLiveSync(): void {
+  if (scholarsLiveSyncTimer !== null) return;
+  scholarsLiveSyncTimer = setInterval(() => { void refreshScholarsSilently(); }, SCHOLARS_LIVE_SYNC_INTERVAL_MS);
+}
+
+async function refreshScholarsSilently(): Promise<void> {
+  try { applyScholarList(await listScholars()); } catch { /* Keep existing list. */ }
+}
+
+// --- Data loading ---
+
+async function loadScholars(): Promise<void> {
+  loading.value = true;
+  try {
+    applyScholarList(await listScholars());
+  } catch (error) {
+    applyScholarList([]);
+    if (error instanceof ApiRequestError) {
+      errorMessage.value = error.message;
+      errorRequestId.value = error.requestId;
+    } else {
+      errorMessage.value = "Unable to load scholars.";
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
+// --- Actions ---
+
+function assignError(error: unknown, fallback: string): void {
+  if (error instanceof ApiRequestError) {
+    errorMessage.value = error.message;
+    errorRequestId.value = error.requestId;
+  } else if (error instanceof Error) {
+    errorMessage.value = error.message;
+  } else {
+    errorMessage.value = fallback;
+  }
+}
+
+function clearMessages(): void {
+  errorMessage.value = null;
+  errorRequestId.value = null;
+  successMessage.value = null;
+}
+
+async function onAddScholars(scholarIds: string[]): Promise<void> {
+  saving.value = true;
+  clearMessages();
+  try {
+    const settled = await Promise.allSettled(
+      scholarIds.map(async (scholarId) => {
+        const created = await createScholar({ scholar_id: scholarId });
+        upsertScholar(created);
+        return created;
+      }),
+    );
+    const failures: string[] = [];
+    let requestIdFromFailures: string | null = null;
+    let createdCount = 0;
+    settled.forEach((result, index) => {
+      if (result.status === "fulfilled") { createdCount += 1; return; }
+      const scholarId = scholarIds[index];
+      if (result.reason instanceof ApiRequestError) {
+        failures.push(`${scholarId}: ${result.reason.message}`);
+        if (!requestIdFromFailures && result.reason.requestId) requestIdFromFailures = result.reason.requestId;
+      } else if (result.reason instanceof Error) {
+        failures.push(`${scholarId}: ${result.reason.message}`);
+      } else {
+        failures.push(`${scholarId}: Unable to create scholar.`);
+      }
+    });
+    if (createdCount > 0) {
+      const total = scholarIds.length;
+      successMessage.value = `Added ${createdCount} of ${total} scholar${total === 1 ? "" : "s"}.`;
+    }
+    if (failures.length > 0) {
+      const preview = failures.slice(0, 3).join(" | ");
+      const remainder = failures.length > 3 ? ` (+${failures.length - 3} more)` : "";
+      errorMessage.value = `Failed to add ${failures.length} scholar${failures.length === 1 ? "" : "s"}: ${preview}${remainder}`;
+      errorRequestId.value = requestIdFromFailures;
+    }
+    await refreshScholarsSilently();
+  } catch (error) {
+    assignError(error, "Unable to create scholar records.");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function onAddCandidate(candidate: ScholarSearchCandidate): Promise<void> {
+  addingCandidateScholarId.value = candidate.scholar_id;
+  clearMessages();
+  try {
+    const created = await createScholar({ scholar_id: candidate.scholar_id, profile_image_url: candidate.profile_image_url ?? undefined });
+    upsertScholar(created);
+    successMessage.value = `${candidate.display_name} added.`;
+  } catch (error) {
+    assignError(error, "Unable to add scholar from search result.");
+  } finally {
+    addingCandidateScholarId.value = null;
+  }
+}
+
+async function onToggleScholar(): Promise<void> {
+  const profile = activeScholarSettings.value;
+  if (!profile) return;
+  activeScholarId.value = profile.id;
+  clearMessages();
+  try {
+    await toggleScholar(profile.id);
+    successMessage.value = `${scholarLabel(profile)} ${profile.is_enabled ? "disabled" : "enabled"}.`;
+    await loadScholars();
+  } catch (error) {
+    assignError(error, "Unable to update scholar status.");
+  } finally {
+    activeScholarId.value = null;
+  }
+}
+
+async function onDeleteScholar(): Promise<void> {
+  const profile = activeScholarSettings.value;
+  if (!profile) return;
+  const label = scholarLabel(profile);
+  if (!window.confirm(`Delete scholar ${label}? This removes all linked publications and queue data.`)) return;
+  activeScholarId.value = profile.id;
+  clearMessages();
+  try {
+    await deleteScholar(profile.id);
+    successMessage.value = `${label} deleted.`;
+    activeScholarSettingsId.value = null;
+    await loadScholars();
+  } catch (error) {
+    assignError(error, "Unable to delete scholar.");
+  } finally {
+    activeScholarId.value = null;
+  }
+}
+
+async function onSaveImageUrl(): Promise<void> {
+  const profile = activeScholarSettings.value;
+  if (!profile) return;
+  const candidate = (imageUrlDraftByScholarId.value[profile.id] || "").trim();
+  if (!candidate) { errorMessage.value = "Enter an image URL before saving, or use Reset image."; return; }
+  imageSavingScholarId.value = profile.id;
+  clearMessages();
+  try {
+    await setScholarImageUrl(profile.id, candidate);
+    successMessage.value = `Image URL updated for ${scholarLabel(profile)}.`;
+    await loadScholars();
+  } catch (error) {
+    assignError(error, "Unable to update scholar image URL.");
+  } finally {
+    imageSavingScholarId.value = null;
+  }
+}
+
+async function onUploadImage(event: Event): Promise<void> {
+  const profile = activeScholarSettings.value;
+  if (!profile) return;
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0] ?? null;
+  if (!file) return;
+  imageUploadingScholarId.value = profile.id;
+  clearMessages();
+  try {
+    await uploadScholarImage(profile.id, file);
+    successMessage.value = `Uploaded image for ${scholarLabel(profile)}.`;
+    await loadScholars();
+  } catch (error) {
+    assignError(error, "Unable to upload scholar image.");
+  } finally {
+    imageUploadingScholarId.value = null;
+    if (input) input.value = "";
+  }
+}
+
+async function onResetImage(): Promise<void> {
+  const profile = activeScholarSettings.value;
+  if (!profile) return;
+  imageSavingScholarId.value = profile.id;
+  clearMessages();
+  try {
+    await clearScholarImage(profile.id);
+    successMessage.value = `Image reset for ${scholarLabel(profile)}.`;
+    await loadScholars();
+  } catch (error) {
+    assignError(error, "Unable to reset scholar image.");
+  } finally {
+    imageSavingScholarId.value = null;
+  }
+}
+
+// --- Import/export ---
 
 function suggestExportFilename(exportedAt: string): string {
-  const date = exportedAt.slice(0, 10) || "unknown-date";
-  return `scholarr-export-${date}.json`;
+  return `scholarr-export-${exportedAt.slice(0, 10) || "unknown-date"}.json`;
 }
 
 function downloadJsonFile(filename: string, payload: unknown): void {
@@ -235,112 +368,15 @@ function importSummary(result: DataImportResult): string {
   );
 }
 
-function isImageBusy(scholarProfileId: number): boolean {
-  return (
-    imageSavingScholarId.value === scholarProfileId ||
-    imageUploadingScholarId.value === scholarProfileId ||
-    activeScholarId.value === scholarProfileId
-  );
-}
-
-function openScholarSettings(profile: ScholarProfile): void {
-  activeScholarSettingsId.value = profile.id;
-}
-
-function closeScholarSettings(): void {
-  activeScholarSettingsId.value = null;
-}
-
-function syncImageDrafts(): void {
-  const next: Record<number, string> = {};
-  for (const item of scholars.value) {
-    const existing = imageUrlDraftByScholarId.value[item.id];
-    if (typeof existing === "string" && existing.length > 0) {
-      next[item.id] = existing;
-      continue;
-    }
-
-    next[item.id] = item.profile_image_source === "override" ? (item.profile_image_url ?? "") : "";
-  }
-  imageUrlDraftByScholarId.value = next;
-}
-
-function applyScholarList(nextScholars: ScholarProfile[]): void {
-  scholars.value = nextScholars;
-  syncImageDrafts();
-}
-
-function upsertScholar(profile: ScholarProfile): void {
-  const existingIndex = scholars.value.findIndex((item) => item.id === profile.id);
-  if (existingIndex < 0) {
-    applyScholarList([profile, ...scholars.value]);
-    return;
-  }
-  const next = [...scholars.value];
-  next[existingIndex] = profile;
-  applyScholarList(next);
-}
-
-function stopScholarLiveSync(): void {
-  if (scholarsLiveSyncTimer === null) {
-    return;
-  }
-  clearInterval(scholarsLiveSyncTimer);
-  scholarsLiveSyncTimer = null;
-}
-
-function startScholarLiveSync(): void {
-  if (scholarsLiveSyncTimer !== null) {
-    return;
-  }
-  scholarsLiveSyncTimer = setInterval(() => {
-    void refreshScholarsSilently();
-  }, SCHOLARS_LIVE_SYNC_INTERVAL_MS);
-}
-
-async function refreshScholarsSilently(): Promise<void> {
-  try {
-    applyScholarList(await listScholars());
-  } catch (_error) {
-    // Keep existing list when transient refresh fails.
-  }
-}
-
-async function loadScholars(): Promise<void> {
-  loading.value = true;
-
-  try {
-    applyScholarList(await listScholars());
-  } catch (error) {
-    applyScholarList([]);
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to load scholars.";
-    }
-  } finally {
-    loading.value = false;
-  }
-}
-
 async function onExportData(): Promise<void> {
   exportingData.value = true;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
+  clearMessages();
   try {
     const payload = await exportScholarData();
     downloadJsonFile(suggestExportFilename(payload.exported_at), payload);
     successMessage.value = "Export complete.";
   } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to export scholars and publications.";
-    }
+    assignError(error, "Unable to export scholars and publications.");
   } finally {
     exportingData.value = false;
   }
@@ -350,327 +386,37 @@ function onOpenImportPicker(): void {
   importFileInput.value?.click();
 }
 
-function parseImportedJson(raw: string): DataImportPayload {
-  const parsed = JSON.parse(raw) as DataImportPayload;
-  if (!parsed || !Array.isArray(parsed.scholars) || !Array.isArray(parsed.publications)) {
-    throw new Error("Invalid import file: expected scholars[] and publications[] arrays.");
-  }
-  return parsed;
-}
-
 async function onImportFileSelected(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement | null;
   const file = input?.files?.[0] ?? null;
-  if (!file) {
-    return;
-  }
-
+  if (!file) return;
   importingData.value = true;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
+  clearMessages();
   try {
-    const payload = parseImportedJson(await file.text());
-    const result = await importScholarData(payload);
+    const raw = await file.text();
+    const parsed = JSON.parse(raw) as DataImportPayload;
+    if (!parsed || !Array.isArray(parsed.scholars) || !Array.isArray(parsed.publications)) {
+      throw new Error("Invalid import file: expected scholars[] and publications[] arrays.");
+    }
+    const result = await importScholarData(parsed);
     successMessage.value = importSummary(result);
     await loadScholars();
   } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else if (error instanceof Error) {
-      errorMessage.value = error.message;
-    } else {
-      errorMessage.value = "Unable to import scholars and publications.";
-    }
+    assignError(error, "Unable to import scholars and publications.");
   } finally {
     importingData.value = false;
-    if (input) {
-      input.value = "";
-    }
+    if (input) input.value = "";
   }
 }
 
-async function onAddScholars(): Promise<void> {
-  saving.value = true;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
+// --- Lifecycle ---
 
-  try {
-    const scholarIds = parseScholarIds(scholarBatchInput.value);
-    if (scholarIds.length === 0) {
-      throw new Error("Provide at least one valid Scholar ID or profile URL.");
-    }
-
-    const settled = await Promise.allSettled(
-      scholarIds.map(async (scholarId) => {
-        const created = await createScholar({ scholar_id: scholarId });
-        upsertScholar(created);
-        return created;
-      }),
-    );
-
-    const failures: string[] = [];
-    let requestIdFromFailures: string | null = null;
-    let createdCount = 0;
-
-    settled.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        createdCount += 1;
-        return;
-      }
-
-      const scholarId = scholarIds[index];
-      if (result.reason instanceof ApiRequestError) {
-        failures.push(`${scholarId}: ${result.reason.message}`);
-        if (!requestIdFromFailures && result.reason.requestId) {
-          requestIdFromFailures = result.reason.requestId;
-        }
-      } else if (result.reason instanceof Error) {
-        failures.push(`${scholarId}: ${result.reason.message}`);
-      } else {
-        failures.push(`${scholarId}: Unable to create scholar.`);
-      }
-    });
-
-    if (createdCount > 0) {
-      const total = scholarIds.length;
-      successMessage.value = `Added ${createdCount} of ${total} scholar${total === 1 ? "" : "s"}.`;
-      scholarBatchInput.value = "";
-    }
-
-    if (failures.length > 0) {
-      const preview = failures.slice(0, 3).join(" | ");
-      const remainder = failures.length > 3 ? ` (+${failures.length - 3} more)` : "";
-      errorMessage.value = `Failed to add ${failures.length} scholar${failures.length === 1 ? "" : "s"}: ${preview}${remainder}`;
-      errorRequestId.value = requestIdFromFailures;
-    }
-
-    await refreshScholarsSilently();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else if (error instanceof Error) {
-      errorMessage.value = error.message;
-    } else {
-      errorMessage.value = "Unable to create scholar records.";
-    }
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function onSearchByName(): Promise<void> {
-  if (nameSearchWip) {
-    searchErrorMessage.value = "Search by name is temporarily disabled while reliability hardening is in progress.";
-    searchErrorRequestId.value = null;
-    return;
-  }
-  searchingByName.value = true;
-  searchErrorMessage.value = null;
-  searchErrorRequestId.value = null;
-
-  try {
-    const normalized = searchQuery.value.trim();
-    if (normalized.length < 2) {
-      throw new Error("Enter at least 2 characters to search.");
-    }
-
-    searchResult.value = await searchScholarsByName(normalized, 12);
-  } catch (error) {
-    searchResult.value = null;
-    if (error instanceof ApiRequestError) {
-      searchErrorMessage.value = error.message;
-      searchErrorRequestId.value = error.requestId;
-    } else if (error instanceof Error) {
-      searchErrorMessage.value = error.message;
-    } else {
-      searchErrorMessage.value = "Unable to search scholars by name.";
-    }
-  } finally {
-    searchingByName.value = false;
-  }
-}
-
-async function onAddCandidate(candidate: ScholarSearchCandidate): Promise<void> {
-  addingCandidateScholarId.value = candidate.scholar_id;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
-  try {
-    const created = await createScholar({
-      scholar_id: candidate.scholar_id,
-      profile_image_url: candidate.profile_image_url ?? undefined,
-    });
-    upsertScholar(created);
-    successMessage.value = `${candidate.display_name} added.`;
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to add scholar from search result.";
-    }
-  } finally {
-    addingCandidateScholarId.value = null;
-  }
-}
-
-async function onToggleScholar(profile: ScholarProfile): Promise<void> {
-  activeScholarId.value = profile.id;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
-  try {
-    await toggleScholar(profile.id);
-    successMessage.value = `${scholarLabel(profile)} ${profile.is_enabled ? "disabled" : "enabled"}.`;
-    await loadScholars();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to update scholar status.";
-    }
-  } finally {
-    activeScholarId.value = null;
-  }
-}
-
-async function onDeleteScholar(profile: ScholarProfile): Promise<void> {
-  const label = scholarLabel(profile);
-  const shouldDelete = window.confirm(`Delete scholar ${label}? This removes all linked publications and queue data.`);
-  if (!shouldDelete) {
-    return;
-  }
-
-  activeScholarId.value = profile.id;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
-  try {
-    await deleteScholar(profile.id);
-    successMessage.value = `${label} deleted.`;
-    if (activeScholarSettingsId.value === profile.id) {
-      closeScholarSettings();
-    }
-    await loadScholars();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to delete scholar.";
-    }
-  } finally {
-    activeScholarId.value = null;
-  }
-}
-
-async function onSaveImageUrl(profile: ScholarProfile): Promise<void> {
-  const candidate = (imageUrlDraftByScholarId.value[profile.id] || "").trim();
-  if (!candidate) {
-    errorMessage.value = "Enter an image URL before saving, or use Reset image.";
-    return;
-  }
-
-  imageSavingScholarId.value = profile.id;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
-  try {
-    await setScholarImageUrl(profile.id, candidate);
-    successMessage.value = `Image URL updated for ${scholarLabel(profile)}.`;
-    await loadScholars();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to update scholar image URL.";
-    }
-  } finally {
-    imageSavingScholarId.value = null;
-  }
-}
-
-async function onUploadImage(profile: ScholarProfile, event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement | null;
-  const file = input?.files?.[0] ?? null;
-  if (!file) {
-    return;
-  }
-
-  imageUploadingScholarId.value = profile.id;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
-  try {
-    await uploadScholarImage(profile.id, file);
-    successMessage.value = `Uploaded image for ${scholarLabel(profile)}.`;
-    await loadScholars();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to upload scholar image.";
-    }
-  } finally {
-    imageUploadingScholarId.value = null;
-    if (input) {
-      input.value = "";
-    }
-  }
-}
-
-async function onResetImage(profile: ScholarProfile): Promise<void> {
-  imageSavingScholarId.value = profile.id;
-  errorMessage.value = null;
-  errorRequestId.value = null;
-  successMessage.value = null;
-
-  try {
-    await clearScholarImage(profile.id);
-    successMessage.value = `Image reset for ${scholarLabel(profile)}.`;
-    await loadScholars();
-  } catch (error) {
-    if (error instanceof ApiRequestError) {
-      errorMessage.value = error.message;
-      errorRequestId.value = error.requestId;
-    } else {
-      errorMessage.value = "Unable to reset scholar image.";
-    }
-  } finally {
-    imageSavingScholarId.value = null;
-  }
-}
-
-onMounted(() => {
-  void loadScholars();
-});
-
-onUnmounted(() => {
-  stopScholarLiveSync();
-});
+onMounted(() => { void loadScholars(); });
+onUnmounted(() => { stopScholarLiveSync(); });
 
 watch(
   () => runStatus.isLikelyRunning,
-  (isRunning) => {
-    if (isRunning) {
-      startScholarLiveSync();
-      return;
-    }
-    stopScholarLiveSync();
-  },
+  (isRunning) => { if (isRunning) { startScholarLiveSync(); } else { stopScholarLiveSync(); } },
   { immediate: true },
 );
 </script>
@@ -693,163 +439,12 @@ watch(
 
       <section class="grid min-h-0 flex-1 gap-4 xl:h-full xl:grid-cols-2 xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden">
         <div class="grid content-start gap-4 xl:order-2 xl:h-full xl:min-h-0 xl:grid-rows-[minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
-          <AppCard class="space-y-4 xl:flex xl:min-h-0 xl:flex-col">
-            <div class="space-y-1">
-              <div class="flex items-center gap-1">
-                <h2 class="text-lg font-semibold text-ink-primary">Add Scholar Profiles</h2>
-                <AppHelpHint
-                  text="A scholar profile is a Google Scholar author page that Scholarr will monitor for publication changes."
-                />
-              </div>
-              <p class="text-sm text-secondary">Paste one or more Scholar IDs or profile URLs and add them in one action.</p>
-            </div>
-
-            <form class="grid gap-3" @submit.prevent="onAddScholars">
-              <label class="grid gap-2 text-sm font-medium text-ink-secondary" for="scholar-batch-input">
-                <span>Scholar IDs or profile URLs</span>
-                <textarea
-                  id="scholar-batch-input"
-                  v-model="scholarBatchInput"
-                  rows="5"
-                  placeholder="A-UbBTPM15wL\nhttps://scholar.google.com/citations?hl=en&user=A-UbBTPM15wL"
-                  class="w-full rounded-lg border border-stroke-interactive bg-surface-input px-3 py-2 text-sm text-ink-primary outline-none ring-focus-ring transition placeholder:text-ink-muted focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset disabled:cursor-not-allowed disabled:opacity-60"
-                />
-              </label>
-
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <p class="text-xs text-secondary">
-                  Parsed IDs: <strong class="text-ink-primary">{{ parsedBatchCount }}</strong>
-                </p>
-                <AppButton type="submit" :disabled="saving || loading">
-                  {{ saving ? "Adding..." : "Add scholars" }}
-                </AppButton>
-              </div>
-            </form>
-          </AppCard>
-
-          <AppCard class="relative space-y-4 select-none xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden">
-            <div class="flex flex-wrap items-start justify-between gap-2">
-              <div class="space-y-1">
-                <div class="flex items-center gap-1">
-                  <h2 class="text-lg font-semibold text-ink-primary">Search by Name</h2>
-                  <AppHelpHint text="Google Scholar now challenges this endpoint with account login and anti-bot checks, so this workflow stays disabled." />
-                </div>
-                <p class="text-sm text-secondary">
-                  This helper remains paused because Google Scholar currently requires account login for reliable name search access.
-                </p>
-              </div>
-              <AppHelpHint text="Name search is kept as WIP. Use direct Scholar ID or profile URL adds for production tracking.">
-                <template #trigger>
-                  <AppBadge tone="warning">WIP</AppBadge>
-                </template>
-              </AppHelpHint>
-            </div>
-
-            <form class="pointer-events-none flex flex-wrap items-center gap-2 opacity-60">
-              <div class="min-w-0 flex-1">
-                <AppInput
-                  id="scholar-search-name"
-                  v-model="searchQuery"
-                  placeholder="e.g. Geoffrey Hinton"
-                  :disabled="nameSearchWip"
-                />
-              </div>
-              <AppButton type="button" :disabled="nameSearchWip">
-                Search
-              </AppButton>
-            </form>
-            <p class="text-xs text-secondary">
-              Direct Scholar ID/URL adds above are the supported path until name search can run without login challenges.
-            </p>
-
-            <div class="min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1">
-              <RequestStateAlerts
-                :error-message="searchErrorMessage"
-                :error-request-id="searchErrorRequestId"
-                error-title="Search request failed"
-              />
-
-              <AsyncStateGate :loading="searchingByName" :loading-lines="4" :show-empty="false">
-                <template v-if="searchResult">
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    <p class="text-sm text-secondary">
-                      {{ searchResult.candidates.length }} candidate{{ searchResult.candidates.length === 1 ? "" : "s" }}
-                      for <strong class="text-ink-primary">{{ searchResult.query }}</strong>
-                    </p>
-                    <AppBadge :tone="searchStateTone">{{ searchResult.state }}</AppBadge>
-                  </div>
-
-                  <p v-if="searchResult.state !== 'ok' || searchResult.warnings.length > 0" class="text-xs text-secondary">
-                    <span>State reason: <code>{{ searchResult.state_reason }}</code></span>
-                    <span v-if="searchResult.action_hint">. {{ searchResult.action_hint }}</span>
-                    <span v-if="searchResult.warnings.length > 0">. Warnings: {{ searchResult.warnings.join(", ") }}</span>
-                  </p>
-
-                  <AppAlert v-if="searchIsDegraded" tone="warning">
-                    <template #title>Name search is degraded</template>
-                    <p>
-                      This endpoint throttles aggressively to avoid blocks. Use Scholar URL/ID adds for dependable tracking.
-                    </p>
-                  </AppAlert>
-
-                  <AsyncStateGate
-                    :loading="false"
-                    :show-empty="true"
-                    :empty="emptySearchCandidates"
-                    empty-title="No scholar matches returned"
-                    empty-body="Try another query later or add directly by Scholar URL/ID."
-                  >
-                    <ul class="grid gap-3">
-                      <li
-                        v-for="candidate in searchResult.candidates"
-                        :key="candidate.scholar_id"
-                        class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3"
-                      >
-                        <div class="flex items-start gap-3">
-                          <ScholarAvatar
-                            size="sm"
-                            :label="candidate.display_name"
-                            :scholar-id="candidate.scholar_id"
-                            :image-url="candidate.profile_image_url"
-                          />
-
-                          <div class="min-w-0 flex-1 space-y-1">
-                            <div class="flex flex-wrap items-center gap-2">
-                              <strong class="text-sm text-ink-primary">{{ candidate.display_name }}</strong>
-                              <code class="text-xs text-secondary">{{ candidate.scholar_id }}</code>
-                              <AppBadge v-if="trackedScholarIds.has(candidate.scholar_id)" tone="success">Tracked</AppBadge>
-                            </div>
-
-                            <p class="truncate text-xs text-secondary">{{ candidate.affiliation || "No affiliation provided" }}</p>
-
-                            <div class="flex flex-wrap items-center gap-2 text-xs text-secondary">
-                              <span v-if="candidate.email_domain">Email: {{ candidate.email_domain }}</span>
-                              <span v-if="candidate.cited_by_count !== null">Cited by: {{ candidate.cited_by_count }}</span>
-                            </div>
-                          </div>
-
-                          <div class="grid shrink-0 gap-2">
-                            <AppButton
-                              :disabled="trackedScholarIds.has(candidate.scholar_id) || addingCandidateScholarId === candidate.scholar_id"
-                              @click="onAddCandidate(candidate)"
-                            >
-                              {{ addingCandidateScholarId === candidate.scholar_id ? "Adding..." : "Add" }}
-                            </AppButton>
-                            <a :href="candidate.profile_url" target="_blank" rel="noreferrer" class="link-inline text-xs text-center">
-                              Open profile
-                            </a>
-                          </div>
-                        </div>
-                      </li>
-                    </ul>
-                  </AsyncStateGate>
-                </template>
-                <p v-else-if="!searchErrorMessage && !searchHasRun" class="text-sm text-secondary">
-                  Name search remains disabled while login-gated responses are unresolved.
-                </p>
-              </AsyncStateGate>
-            </div>
-          </AppCard>
+          <ScholarBatchAdd :saving="saving" :loading="loading" @add-scholars="onAddScholars" />
+          <ScholarNameSearch
+            :tracked-scholar-ids="trackedScholarIds"
+            :adding-candidate-scholar-id="addingCandidateScholarId"
+            @add-candidate="onAddCandidate"
+          />
         </div>
 
         <AppCard class="flex min-h-0 flex-col gap-4 xl:order-1 xl:h-full xl:overflow-hidden">
@@ -857,9 +452,7 @@ watch(
             <div class="space-y-1">
               <div class="flex items-center gap-1">
                 <h2 class="text-lg font-semibold text-ink-primary">Tracked Scholars</h2>
-                <AppHelpHint
-                  text="Tracked scholars are active profile sources. Open Manage to control status, image overrides, and removal."
-                />
+                <AppHelpHint text="Tracked scholars are active profile sources. Open Manage to control status, image overrides, and removal." />
               </div>
               <p class="text-sm text-secondary">Review tracked profiles, filter quickly, and open per-scholar settings when needed.</p>
             </div>
@@ -867,9 +460,7 @@ watch(
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <p class="text-xs font-medium uppercase tracking-wide text-secondary">Tracking status</p>
                 <div class="flex flex-wrap items-center gap-2">
-                  <span
-                    class="inline-flex min-h-10 items-center rounded-lg border border-state-info-border bg-state-info-bg px-3 text-sm font-semibold text-state-info-text"
-                  >
+                  <span class="inline-flex min-h-10 items-center rounded-lg border border-state-info-border bg-state-info-bg px-3 text-sm font-semibold text-state-info-text">
                     {{ trackedCountLabel }}
                   </span>
                   <AppButton variant="secondary" :disabled="loading || exportingData" @click="onExportData">
@@ -878,32 +469,14 @@ watch(
                   <AppButton variant="secondary" :disabled="loading || importingData" @click="onOpenImportPicker">
                     {{ importingData ? "Importing..." : "Import" }}
                   </AppButton>
-                  <AppRefreshButton
-                    variant="secondary"
-                    :disabled="saving"
-                    :loading="loading"
-                    title="Refresh scholars"
-                    loading-title="Refreshing scholars"
-                    @click="loadScholars"
-                  />
+                  <AppRefreshButton variant="secondary" :disabled="saving" :loading="loading" title="Refresh scholars" loading-title="Refreshing scholars" @click="loadScholars" />
                 </div>
               </div>
-              <input
-                ref="importFileInput"
-                type="file"
-                class="sr-only"
-                accept=".json,application/json"
-                @change="onImportFileSelected"
-              />
-
+              <input ref="importFileInput" type="file" class="sr-only" accept=".json,application/json" @change="onImportFileSelected" />
               <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem]">
                 <label class="grid gap-1 text-xs font-medium uppercase tracking-wide text-secondary" for="tracked-scholar-filter">
                   <span>Filter tracked scholars</span>
-                  <AppInput
-                    id="tracked-scholar-filter"
-                    v-model="trackedFilterQuery"
-                    placeholder="Filter by name or scholar ID"
-                  />
+                  <AppInput id="tracked-scholar-filter" v-model="trackedFilterQuery" placeholder="Filter by name or scholar ID" />
                 </label>
                 <label class="grid gap-1 text-xs font-medium uppercase tracking-wide text-secondary" for="tracked-scholar-sort">
                   <span>Sort</span>
@@ -919,47 +492,24 @@ watch(
           </div>
 
           <div class="min-h-0 flex-1 xl:overflow-hidden">
-            <AsyncStateGate
-              :loading="loading"
-              :loading-lines="6"
-              :empty="!hasTrackedScholars"
-              :show-empty="!errorMessage"
-              empty-title="No scholars tracked"
-              empty-body="Add a Scholar ID or URL to start ingestion tracking."
-            >
-              <AppEmptyState
-                v-if="!hasVisibleScholars"
-                title="No scholars match this filter"
-                body="Clear or adjust the filter to see tracked scholars."
-              />
-
+            <AsyncStateGate :loading="loading" :loading-lines="6" :empty="!hasTrackedScholars" :show-empty="!errorMessage" empty-title="No scholars tracked" empty-body="Add a Scholar ID or URL to start ingestion tracking.">
+              <AppEmptyState v-if="!hasVisibleScholars" title="No scholars match this filter" body="Clear or adjust the filter to see tracked scholars." />
               <div v-else class="space-y-3 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:space-y-0 xl:overflow-hidden">
                 <ul class="flex gap-3 overflow-x-auto p-1 lg:hidden">
-                  <li
-                    v-for="item in visibleScholars"
-                    :key="item.id"
-                    class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3"
-                  >
+                  <li v-for="item in visibleScholars" :key="item.id" class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3">
                     <div class="flex items-start gap-3">
                       <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
-
                       <div class="min-w-0 flex-1 space-y-1">
                         <p class="truncate text-sm font-semibold text-ink-primary">{{ scholarLabel(item) }}</p>
                         <div class="flex flex-wrap items-center gap-3">
-                          <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
-                            Publications
-                          </RouterLink>
-                          <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">
-                            Open profile
-                          </a>
+                          <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">Publications</RouterLink>
+                          <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">Open profile</a>
                         </div>
                       </div>
-
-                      <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
+                      <AppButton variant="secondary" :disabled="saving" @click="activeScholarSettingsId = item.id">Manage</AppButton>
                     </div>
                   </li>
                 </ul>
-
                 <div class="hidden min-h-0 flex-1 overflow-hidden lg:block">
                   <AppTable class="h-full overflow-y-scroll overscroll-contain" label="Tracked scholars table">
                     <thead>
@@ -973,22 +523,17 @@ watch(
                         <td>
                           <div class="flex items-start gap-3">
                             <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
-
                             <div class="grid min-w-0 gap-1">
                               <strong class="truncate text-ink-primary">{{ scholarLabel(item) }}</strong>
                               <div class="flex flex-wrap items-center gap-3">
-                                <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">
-                                  Publications
-                                </RouterLink>
-                                <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">
-                                  Open profile
-                                </a>
+                                <RouterLink :to="scholarPublicationsRoute(item)" class="link-inline text-xs">Publications</RouterLink>
+                                <a :href="scholarProfileUrl(item.scholar_id)" target="_blank" rel="noreferrer" class="link-inline text-xs">Open profile</a>
                               </div>
                             </div>
                           </div>
                         </td>
                         <td>
-                          <AppButton variant="secondary" :disabled="saving" @click="openScholarSettings(item)">Manage</AppButton>
+                          <AppButton variant="secondary" :disabled="saving" @click="activeScholarSettingsId = item.id">Manage</AppButton>
                         </td>
                       </tr>
                     </tbody>
@@ -1001,98 +546,20 @@ watch(
       </section>
     </div>
 
-    <AppModal :open="activeScholarSettings !== null" title="Scholar settings" @close="closeScholarSettings">
-      <div v-if="activeScholarSettings" class="grid gap-4">
-        <div class="flex items-start gap-3">
-          <ScholarAvatar
-            :label="activeScholarSettings.display_name"
-            :scholar-id="activeScholarSettings.scholar_id"
-            :image-url="activeScholarSettings.profile_image_url"
-          />
-
-          <div class="min-w-0 space-y-1">
-            <p class="truncate text-sm font-semibold text-ink-primary">
-              {{ scholarLabel(activeScholarSettings) }}
-            </p>
-            <p class="text-xs text-secondary">
-              ID: <code>{{ activeScholarSettings.scholar_id }}</code>
-            </p>
-            <div class="flex flex-wrap items-center gap-3">
-              <RouterLink :to="scholarPublicationsRoute(activeScholarSettings)" class="link-inline text-xs">
-                View publications
-              </RouterLink>
-              <a
-                :href="scholarProfileUrl(activeScholarSettings.scholar_id)"
-                target="_blank"
-                rel="noreferrer"
-                class="link-inline text-xs"
-              >
-                Open Google Scholar profile
-              </a>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid gap-2">
-          <label class="text-sm font-medium text-ink-secondary" :for="`scholar-image-url-${activeScholarSettings.id}`">
-            Profile image URL override
-          </label>
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="min-w-0 flex-1">
-              <AppInput
-                :id="`scholar-image-url-${activeScholarSettings.id}`"
-                v-model="imageUrlDraftByScholarId[activeScholarSettings.id]"
-                placeholder="https://example.com/avatar.jpg"
-                :disabled="isImageBusy(activeScholarSettings.id)"
-              />
-            </div>
-            <AppButton
-              variant="secondary"
-              :disabled="isImageBusy(activeScholarSettings.id)"
-              @click="onSaveImageUrl(activeScholarSettings)"
-            >
-              {{ imageSavingScholarId === activeScholarSettings.id ? "Saving..." : "Save URL" }}
-            </AppButton>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <label
-              :for="`scholar-image-upload-${activeScholarSettings.id}`"
-              class="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-lg border border-stroke-strong bg-action-secondary-bg px-3 py-2 text-sm font-semibold text-action-secondary-text transition hover:bg-action-secondary-hover-bg focus-within:outline-none focus-within:ring-2 focus-within:ring-focus-ring focus-within:ring-offset-2 focus-within:ring-offset-focus-offset"
-              :class="{ 'pointer-events-none opacity-60': isImageBusy(activeScholarSettings.id) }"
-            >
-              {{ imageUploadingScholarId === activeScholarSettings.id ? "Uploading..." : "Upload image" }}
-            </label>
-            <input
-              :id="`scholar-image-upload-${activeScholarSettings.id}`"
-              type="file"
-              class="sr-only"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              :disabled="isImageBusy(activeScholarSettings.id)"
-              @change="onUploadImage(activeScholarSettings, $event)"
-            />
-            <AppButton variant="ghost" :disabled="isImageBusy(activeScholarSettings.id)" @click="onResetImage(activeScholarSettings)">
-              Reset image
-            </AppButton>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-stroke-default pt-3">
-          <AppButton
-            variant="secondary"
-            :disabled="isImageBusy(activeScholarSettings.id) || saving"
-            @click="onToggleScholar(activeScholarSettings)"
-          >
-            {{ activeScholarSettings.is_enabled ? "Disable scholar" : "Enable scholar" }}
-          </AppButton>
-          <AppButton
-            variant="danger"
-            :disabled="isImageBusy(activeScholarSettings.id) || saving"
-            @click="onDeleteScholar(activeScholarSettings)"
-          >
-            Delete scholar
-          </AppButton>
-        </div>
-      </div>
-    </AppModal>
+    <ScholarSettingsModal
+      :scholar="activeScholarSettings"
+      :image-url-draft="activeScholarSettings ? (imageUrlDraftByScholarId[activeScholarSettings.id] ?? '') : ''"
+      :image-busy="activeScholarSettings ? isImageBusy(activeScholarSettings.id) : false"
+      :image-saving="activeScholarSettings ? imageSavingScholarId === activeScholarSettings.id : false"
+      :image-uploading="activeScholarSettings ? imageUploadingScholarId === activeScholarSettings.id : false"
+      :saving="saving"
+      @close="activeScholarSettingsId = null"
+      @update:image-url-draft="v => { if (activeScholarSettings) imageUrlDraftByScholarId[activeScholarSettings.id] = v; }"
+      @save-image-url="onSaveImageUrl"
+      @upload-image="onUploadImage"
+      @reset-image="onResetImage"
+      @toggle="onToggleScholar"
+      @delete="onDeleteScholar"
+    />
   </AppPage>
 </template>

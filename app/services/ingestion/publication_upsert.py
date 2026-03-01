@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CrawlRun, Publication, ScholarProfile, ScholarPublication
-from app.services.doi.normalize import first_doi_from_texts
 from app.services.ingestion.fingerprints import (
     build_publication_fingerprint,
     build_publication_url,
@@ -106,8 +105,9 @@ def update_existing_publication(
 ) -> None:
     if candidate.cluster_id and publication.cluster_id is None:
         publication.cluster_id = candidate.cluster_id
-    publication.title_raw = candidate.title
-    publication.title_normalized = normalize_title(candidate.title)
+    if not publication.title_raw:
+        publication.title_raw = candidate.title
+        publication.title_normalized = normalize_title(candidate.title)
     if candidate.year is not None:
         publication.year = candidate.year
     if candidate.citation_count is not None:
@@ -118,7 +118,6 @@ def update_existing_publication(
         publication.venue_text = candidate.venue_text
     if candidate.title_url:
         publication.pub_url = build_publication_url(candidate.title_url)
-    first_doi_from_texts(candidate.title_url, candidate.venue_text, candidate.title)
 
 
 async def resolve_publication(

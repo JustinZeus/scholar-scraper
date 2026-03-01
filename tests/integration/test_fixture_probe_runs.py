@@ -95,7 +95,7 @@ async def test_fixture_probe_run_emits_failure_and_retry_summary_metrics(
         "retry": "RSTUVWX12345",
     }
 
-    for label in ("ok", "blocked", "retry"):
+    for label in ("ok", "retry", "blocked"):
         await db_session.execute(
             text(
                 """

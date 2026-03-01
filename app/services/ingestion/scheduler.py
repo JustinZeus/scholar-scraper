@@ -125,9 +125,10 @@ class SchedulerService:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception(
+                structured_log(
+                    logger,
+                    "exception",
                     "scheduler.tick_failed",
-                    extra={},
                 )
             await asyncio.sleep(float(self._tick_seconds))
 
@@ -263,7 +264,12 @@ class SchedulerService:
                 return None
             except Exception:
                 await session.rollback()
-                logger.exception("scheduler.run_failed", extra={"user_id": candidate.user_id})
+                structured_log(
+                    logger,
+                    "exception",
+                    "scheduler.run_failed",
+                    user_id=candidate.user_id,
+                )
                 return None
 
     async def _run_candidate(self, candidate: _AutoRunCandidate) -> None:
@@ -300,4 +306,8 @@ class SchedulerService:
                         processed_count=processed,
                     )
             except Exception:
-                logger.exception("scheduler.pdf_queue_drain_failed", extra={})
+                structured_log(
+                    logger,
+                    "exception",
+                    "scheduler.pdf_queue_drain_failed",
+                )

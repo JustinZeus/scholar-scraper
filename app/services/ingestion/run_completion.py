@@ -427,3 +427,31 @@ def run_execution_summary(
         partial_count=progress.partial_count,
         new_publication_count=run.new_pub_count,
     )
+
+
+def log_run_completed(
+    *,
+    run: CrawlRun,
+    user_id: int,
+    scholars: list[ScholarProfile],
+    progress: RunProgress,
+    failure_summary: RunFailureSummary,
+    alert_summary: RunAlertSummary,
+) -> None:
+    structured_log(
+        logger,
+        "info",
+        "ingestion.run_completed",
+        user_id=user_id,
+        crawl_run_id=run.id,
+        status=run.status.value,
+        scholar_count=len(scholars),
+        succeeded_count=progress.succeeded_count,
+        failed_count=progress.failed_count,
+        partial_count=progress.partial_count,
+        new_publication_count=run.new_pub_count,
+        blocked_failure_count=alert_summary.blocked_failure_count,
+        network_failure_count=alert_summary.network_failure_count,
+        retries_scheduled_count=failure_summary.retries_scheduled_count,
+        alert_flags=alert_summary.alert_flags,
+    )

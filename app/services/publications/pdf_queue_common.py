@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from app.db.models import PublicationPdfJob, PublicationPdfJobEvent
 
+PDF_STATUS_UNTRACKED = "untracked"
 PDF_STATUS_QUEUED = "queued"
 PDF_STATUS_RUNNING = "running"
 PDF_STATUS_RESOLVED = "resolved"

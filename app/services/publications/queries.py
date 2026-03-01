@@ -16,6 +16,12 @@ from app.db.models import (
     ScholarPublication,
 )
 from app.services.publications.modes import MODE_LATEST, MODE_UNREAD
+from app.services.publications.pdf_queue_common import (
+    PDF_STATUS_FAILED,
+    PDF_STATUS_QUEUED,
+    PDF_STATUS_RESOLVED,
+    PDF_STATUS_RUNNING,
+)
 from app.services.publications.types import PublicationListItem, UnreadPublicationItem
 
 
@@ -29,10 +35,10 @@ def _normalized_citation_count(value: object) -> int:
 def _pdf_status_sort_rank():
     return case(
         (Publication.pdf_url.is_not(None), 4),
-        (PublicationPdfJob.status == "resolved", 4),
-        (PublicationPdfJob.status == "running", 3),
-        (PublicationPdfJob.status == "queued", 2),
-        (PublicationPdfJob.status == "failed", 0),
+        (PublicationPdfJob.status == PDF_STATUS_RESOLVED, 4),
+        (PublicationPdfJob.status == PDF_STATUS_RUNNING, 3),
+        (PublicationPdfJob.status == PDF_STATUS_QUEUED, 2),
+        (PublicationPdfJob.status == PDF_STATUS_FAILED, 0),
         else_=1,
     )
 

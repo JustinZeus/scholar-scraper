@@ -37,7 +37,8 @@ from app.api.schemas import (
     RunsListEnvelope,
 )
 from app.db.models import RunStatus, RunTriggerType, User
-from app.db.session import get_db_session
+from app.db.session import get_db_session, get_session_factory
+from app.logging_utils import structured_log
 from app.services.ingestion import application as ingestion_service
 from app.services.runs import application as run_service
 from app.services.runs.events import event_generator
@@ -46,6 +47,14 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _drop_finished_task(task: asyncio.Task[Any]) -> None:
+    _background_tasks.discard(task)
+    try:
+        task.result()
+    except Exception:
+        structured_log(logger, "exception", "runs.background_task_failed")
 
 router = APIRouter(prefix="/runs", tags=["api-runs"])
 ACTIVE_RUN_STATUSES = {RunStatus.RUNNING, RunStatus.RESOLVING}
@@ -234,7 +243,7 @@ def _spawn_background_execution(
         )
     )
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    task.add_done_callback(_drop_finished_task)
 
 
 @router.post(
@@ -247,15 +256,16 @@ async def run_manual(
     current_user: User = Depends(get_api_current_user),
     ingest_service: ingestion_service.ScholarIngestionService = Depends(get_ingestion_service),
 ):
-    safety_state = await load_safety_state(db_session, user_id=current_user.id)
+    user_id = int(current_user.id)
+    safety_state = await load_safety_state(db_session, user_id=user_id)
     if not settings.ingestion_manual_run_allowed:
-        raise_manual_runs_disabled(user_id=current_user.id, safety_state=safety_state)
+        raise_manual_runs_disabled(user_id=user_id, safety_state=safety_state)
 
     idempotency_key = normalize_idempotency_key(request.headers.get(IDEMPOTENCY_HEADER))
     reused_payload = await reused_manual_run_payload(
         db_session,
         request=request,
-        user_id=current_user.id,
+        user_id=user_id,
         idempotency_key=idempotency_key,
         safety_state=safety_state,
     )
@@ -291,12 +301,12 @@ async def run_manual(
                 "new_publication_count": 0,
                 "reused_existing_run": False,
                 "idempotency_key": idempotency_key,
-                "safety_state": await load_safety_state(db_session, user_id=current_user.id),
+                "safety_state": await load_safety_state(db_session, user_id=user_id),
             },
         )
     except ingestion_service.RunBlockedBySafetyPolicyError as exc:
         await db_session.rollback()
-        raise_manual_blocked_safety(exc=exc, user_id=current_user.id)
+        raise_manual_blocked_safety(exc=exc, user_id=user_id)
     except ingestion_service.RunAlreadyInProgressError as exc:
         await db_session.rollback()
         raise ApiException(
@@ -309,13 +319,13 @@ async def run_manual(
         return await recover_integrity_error(
             db_session,
             request=request,
-            user_id=current_user.id,
+            user_id=user_id,
             idempotency_key=idempotency_key,
             original_exc=exc,
         )
     except Exception as exc:
         await db_session.rollback()
-        raise_manual_failed(exc=exc, user_id=current_user.id)
+        raise_manual_failed(exc=exc, user_id=user_id)
 
 
 @router.get(
@@ -454,14 +464,15 @@ async def clear_queue_item(
 @router.get("/{run_id}/stream")
 async def stream_run_events(
     run_id: int,
-    db_session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_api_current_user),
 ):
-    run = await run_service.get_run_for_user(
-        db_session,
-        user_id=current_user.id,
-        run_id=run_id,
-    )
+    session_factory = get_session_factory()
+    async with session_factory() as db_session:
+        run = await run_service.get_run_for_user(
+            db_session,
+            user_id=current_user.id,
+            run_id=run_id,
+        )
     if run is None:
         raise ApiException(
             status_code=404,
