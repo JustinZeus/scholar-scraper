@@ -144,18 +144,17 @@ async def create_scholar(
             message=str(exc),
         ) from exc
     structured_log(logger, "info", "api.scholars.created", user_id=current_user.id, scholar_profile_id=created.id)
-    did_queue_initial_scrape = await enqueue_initial_scrape_job_for_scholar(
+    await enqueue_initial_scrape_job_for_scholar(
         db_session,
         profile=created,
         user_id=current_user.id,
     )
-    if not did_queue_initial_scrape:
-        created = await hydrate_scholar_metadata_if_needed(
-            db_session,
-            profile=created,
-            source=source,
-            user_id=current_user.id,
-        )
+    created = await hydrate_scholar_metadata_if_needed(
+        db_session,
+        profile=created,
+        source=source,
+        user_id=current_user.id,
+    )
 
     return success_payload(
         request,

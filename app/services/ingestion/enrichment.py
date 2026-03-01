@@ -37,6 +37,40 @@ def _sanitize_titles(publications: list) -> list[str]:
     return titles
 
 
+# OpenAlex (and most HTTP servers) struggle with very long query strings.
+# Non-ASCII characters expand significantly when percent-encoded in URLs,
+# so a fixed batch count is unreliable.  Instead we cap the combined
+# byte-length of the pipe-joined title filter value to stay well within
+# safe URL limits (~4 KiB of filter text ≈ ~6 KiB when percent-encoded).
+_MAX_TITLE_FILTER_BYTES = 4_000
+
+
+def _chunk_titles_by_url_length(
+    titles: list[str],
+    max_bytes: int = _MAX_TITLE_FILTER_BYTES,
+) -> list[list[str]]:
+    """Split *titles* into chunks whose pipe-joined UTF-8 size stays under *max_bytes*."""
+    chunks: list[list[str]] = []
+    current_chunk: list[str] = []
+    current_bytes = 0
+
+    for title in titles:
+        title_bytes = len(title.encode("utf-8"))
+        # Account for the pipe separator between titles
+        separator = 3 if current_chunk else 0  # len("|".encode) but url-encoded as %7C = 3
+        if current_chunk and current_bytes + separator + title_bytes > max_bytes:
+            chunks.append(current_chunk)
+            current_chunk = [title]
+            current_bytes = title_bytes
+        else:
+            current_chunk.append(title)
+            current_bytes += separator + title_bytes
+
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks
+
+
 class EnrichmentRunner:
     """Post-run OpenAlex enrichment logic.
 
@@ -156,21 +190,34 @@ class EnrichmentRunner:
 
         resolved_key = openalex_api_key or settings.openalex_api_key
         client = OpenAlexClient(api_key=resolved_key, mailto=settings.crossref_api_mailto)
-        batch_size = 25
         now = datetime.now(UTC)
         arxiv_lookup_allowed = True
 
-        for i in range(0, len(publications), batch_size):
+        all_titles = _sanitize_titles(publications)
+        title_chunks = _chunk_titles_by_url_length(all_titles)
+
+        # Build a mapping from sanitized title → publications for batch association
+        title_to_pubs: dict[str, list[Publication]] = {}
+        for p in publications:
+            raw = getattr(p, "title_raw", None) or getattr(p, "title", None)
+            if not raw or not raw.strip():
+                continue
+            safe = " ".join(re.sub(r"[^\w\s]", " ", raw).split())
+            if safe:
+                title_to_pubs.setdefault(safe, []).append(p)
+
+        for title_chunk in title_chunks:
             if await self.run_is_canceled(db_session, run_id=run_id):
                 structured_log(logger, "info", "ingestion.enrichment_aborted", run_id=run_id)
                 return
-            batch = publications[i : i + batch_size]
-            titles = _sanitize_titles(batch)
-            if not titles:
+            batch = []
+            for t in title_chunk:
+                batch.extend(title_to_pubs.get(t, []))
+            if not batch:
                 continue
             try:
                 openalex_works = await client.get_works_by_filter(
-                    {"title.search": "|".join(titles)}, limit=batch_size * 3
+                    {"title.search": "|".join(title_chunk)}, limit=len(title_chunk) * 3
                 )
             except OpenAlexBudgetExhaustedError:
                 structured_log(logger, "warning", "ingestion.openalex_budget_exhausted", run_id=run_id)
@@ -289,19 +336,37 @@ class EnrichmentRunner:
 
         client = OpenAlexClient(api_key=settings.openalex_api_key, mailto=settings.crossref_api_mailto)
 
-        batch_size = 25
+        all_titles = _sanitize_titles(publications)
+        title_chunks = _chunk_titles_by_url_length(all_titles)
+
+        # Build title → publication mapping for batch association
+        title_to_pubs: dict[str, list[PublicationCandidate]] = {}
+        for p in publications:
+            raw = getattr(p, "title", None)
+            if not raw or not raw.strip():
+                continue
+            safe = " ".join(re.sub(r"[^\w\s]", " ", raw).split())
+            if safe:
+                title_to_pubs.setdefault(safe, []).append(p)
+
+        # Collect publications that had no sanitizable title — pass through as-is
+        pubs_with_titles = set()
+        for titles in title_to_pubs.values():
+            for p in titles:
+                pubs_with_titles.add(id(p))
+
         enriched: list[PublicationCandidate] = []
 
-        for i in range(0, len(publications), batch_size):
-            batch = publications[i : i + batch_size]
-            titles = _sanitize_titles(batch)
-            if not titles:
-                enriched.extend(batch)
+        for title_chunk in title_chunks:
+            batch = []
+            for t in title_chunk:
+                batch.extend(title_to_pubs.get(t, []))
+            if not batch:
                 continue
 
             try:
                 openalex_works = await client.get_works_by_filter(
-                    {"title.search": "|".join(titles)}, limit=batch_size * 3
+                    {"title.search": "|".join(title_chunk)}, limit=len(title_chunk) * 3
                 )
             except Exception as e:
                 structured_log(
@@ -335,4 +400,10 @@ class EnrichmentRunner:
                     enriched.append(new_p)
                 else:
                     enriched.append(p)
+
+        # Append publications that had no sanitizable title (pass-through)
+        for p in publications:
+            if id(p) not in pubs_with_titles:
+                enriched.append(p)
+
         return enriched
