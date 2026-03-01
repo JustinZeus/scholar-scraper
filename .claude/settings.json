@@ -19,7 +19,11 @@
       "Bash(git add app/api/routers/runs.py app/services/arxiv/rate_limit.py tests/integration/test_run_lifecycle_consistency.py docs/website/package-lock.json)",
       "Bash(git push)",
       "Bash(uvx ruff format --check app/api/routers/runs.py app/services/arxiv/rate_limit.py tests/integration/test_run_lifecycle_consistency.py)",
-      "Bash(test -f docs/website/package-lock.json)"
+      "Bash(test -f docs/website/package-lock.json)",
+      "Bash(gh run list --branch openalex-size-reduction-scholar-hydration --limit 3 --json databaseId,status,conclusion,name,event)",
+      "Bash(gh run list --limit 10 --json databaseId,status,conclusion,name,event,headBranch)",
+      "Bash(gh run view 22554585841 --log-failed)",
+      "Bash(gh run rerun 22554585841 --failed)"
     ],
     "additionalDirectories": [
       "/home/jv/src/personal/playground/scholar_scraper/scholar-scraper/frontend/src"

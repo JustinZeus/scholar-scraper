@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.schemas.common import ApiMeta
 
@@ -128,10 +128,19 @@ class DataExportEnvelope(BaseModel):
 
 class DataImportRequest(BaseModel):
     schema_version: int | None = None
+    exported_at: str | None = None
     scholars: list[ScholarExportItemData] = Field(default_factory=list)
     publications: list[PublicationExportItemData] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def unwrap_export_envelope(cls, values: dict) -> dict:  # type: ignore[override]
+        """Accept the full export envelope format (with data/meta wrapper)."""
+        if isinstance(values, dict) and "data" in values and isinstance(values["data"], dict):
+            return values["data"]
+        return values
 
 
 class DataImportResultData(BaseModel):

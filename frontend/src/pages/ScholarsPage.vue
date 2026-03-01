@@ -394,11 +394,16 @@ async function onImportFileSelected(event: Event): Promise<void> {
   clearMessages();
   try {
     const raw = await file.text();
-    const parsed = JSON.parse(raw) as DataImportPayload;
-    if (!parsed || !Array.isArray(parsed.scholars) || !Array.isArray(parsed.publications)) {
+    let parsed = JSON.parse(raw);
+    // Accept the full export envelope (with data/meta wrapper)
+    if (parsed?.data && Array.isArray(parsed.data.scholars)) {
+      parsed = parsed.data;
+    }
+    const payload = parsed as DataImportPayload;
+    if (!payload || !Array.isArray(payload.scholars) || !Array.isArray(payload.publications)) {
       throw new Error("Invalid import file: expected scholars[] and publications[] arrays.");
     }
-    const result = await importScholarData(parsed);
+    const result = await importScholarData(payload);
     successMessage.value = importSummary(result);
     await loadScholars();
   } catch (error) {
