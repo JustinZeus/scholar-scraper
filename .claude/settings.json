@@ -23,7 +23,8 @@
       "Bash(gh run list --branch openalex-size-reduction-scholar-hydration --limit 3 --json databaseId,status,conclusion,name,event)",
       "Bash(gh run list --limit 10 --json databaseId,status,conclusion,name,event,headBranch)",
       "Bash(gh run view 22554585841 --log-failed)",
-      "Bash(gh run rerun 22554585841 --failed)"
+      "Bash(gh run rerun 22554585841 --failed)",
+      "Bash(bash scripts/premerge.sh)"
     ],
     "additionalDirectories": [
       "/home/jv/src/personal/playground/scholar_scraper/scholar-scraper/frontend/src"

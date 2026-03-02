@@ -289,6 +289,10 @@ class SchedulerService:
 
     async def _drain_pdf_queue(self) -> None:
         from app.services.publications.pdf_queue import drain_ready_jobs
+        from app.services.publications.pdf_queue_resolution import is_budget_cooldown_active
+
+        if is_budget_cooldown_active():
+            return
 
         session_factory = get_session_factory()
         async with session_factory() as session:

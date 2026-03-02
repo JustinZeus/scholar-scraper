@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 
 from app.db.models import Publication, PublicationPdfJob
 from app.db.session import get_session_factory
@@ -29,8 +30,20 @@ PDF_EVENT_ATTEMPT_STARTED = "attempt_started"
 PDF_EVENT_RESOLVED = "resolved"
 PDF_EVENT_FAILED = "failed"
 
+_BUDGET_COOLDOWN_MINUTES = 15
+
 logger = logging.getLogger(__name__)
 _scheduled_tasks: set[asyncio.Task[None]] = set()
+_budget_cooldown_until: datetime | None = None
+
+
+def is_budget_cooldown_active() -> bool:
+    return _budget_cooldown_until is not None and datetime.now(UTC) < _budget_cooldown_until
+
+
+def _enter_budget_cooldown() -> None:
+    global _budget_cooldown_until
+    _budget_cooldown_until = datetime.now(UTC) + timedelta(minutes=_BUDGET_COOLDOWN_MINUTES)
 
 
 async def _mark_attempt_started(
@@ -233,11 +246,13 @@ async def _run_resolution_task(
                     detail="arXiv temporarily disabled for remaining batch after rate limit",
                 )
         except OpenAlexBudgetExhaustedError:
+            _enter_budget_cooldown()
             structured_log(
                 logger,
                 "warning",
                 "pdf_queue.budget_exhausted",
                 detail="Stopping PDF resolution batch — OpenAlex daily budget exhausted",
+                cooldown_minutes=_BUDGET_COOLDOWN_MINUTES,
             )
             break
         except Exception:
