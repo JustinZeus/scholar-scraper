@@ -19,4 +19,4 @@ frontend/.vite/
 docs/website/node_modules/
 docs/website/build/
 docs/website/.docusaurus/
-.claude/settings.json
+.claude/
