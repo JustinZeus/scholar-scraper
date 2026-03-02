@@ -23,6 +23,12 @@ class StubScholarSource:
         index = min(self.calls - 1, len(self._fetch_results) - 1)
         return self._fetch_results[index]
 
+    async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
+        raise NotImplementedError
+
+    async def fetch_profile_page_html(self, scholar_id: str, *, cstart: int, pagesize: int) -> FetchResult:
+        raise NotImplementedError
+
 
 def _ok_author_search_fetch() -> FetchResult:
     body = (

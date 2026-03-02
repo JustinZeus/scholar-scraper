@@ -147,8 +147,8 @@ async def test_client_coalesces_concurrent_identical_search_requests() -> None:
 async def test_client_logs_cache_hit_and_miss(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    patch_session_factory,
 ) -> None:
-    _ = db_session
     calls = {"count": 0}
     logged: list[dict[str, object]] = []
 

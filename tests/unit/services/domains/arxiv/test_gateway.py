@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -10,7 +10,9 @@ from app.services.arxiv.types import ArxivEntry, ArxivFeed, ArxivOpenSearchMeta
 from app.settings import settings
 
 
-def _item(*, title: str = "A Test Paper", scholar_label: str = "Ada Lovelace") -> SimpleNamespace:
+def _item(*, title: str = "A Test Paper", scholar_label: str = "Ada Lovelace") -> Any:
+    from types import SimpleNamespace
+
     return SimpleNamespace(title=title, scholar_label=scholar_label)
 
 
@@ -71,7 +73,7 @@ async def test_http_gateway_returns_none_when_disabled(monkeypatch: pytest.Monke
     fake_client = FakeClient()
     object.__setattr__(settings, "arxiv_enabled", False)
     try:
-        gateway = arxiv_gateway.HttpArxivGateway(client=fake_client)
+        gateway = arxiv_gateway.HttpArxivGateway(client=fake_client)  # type: ignore[arg-type]
         result = await gateway.discover_arxiv_id_for_publication(item=_item())
         assert result is None
         assert fake_client.calls == 0
@@ -102,7 +104,7 @@ async def test_http_gateway_uses_client_search_for_discovery() -> None:
             )
 
     fake_client = FakeClient()
-    gateway = arxiv_gateway.HttpArxivGateway(client=fake_client)
+    gateway = arxiv_gateway.HttpArxivGateway(client=fake_client)  # type: ignore[arg-type]
     result = await gateway.discover_arxiv_id_for_publication(
         item=_item(title="My Paper", scholar_label="Ada Lovelace"),
         request_email="user@example.com",

@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -42,9 +43,9 @@ async def test_create_hydration_skips_when_global_throttle_active(
     )
 
     result = await scholar_helpers.hydrate_scholar_metadata_if_needed(
-        db_session=None,
+        db_session=cast(Any, None),
         profile=profile,
-        source=object(),
+        source=cast(Any, object()),
         user_id=7,
     )
 
@@ -77,9 +78,9 @@ async def test_create_hydration_runs_when_throttle_is_clear(
     )
 
     result = await scholar_helpers.hydrate_scholar_metadata_if_needed(
-        db_session=None,
+        db_session=cast(Any, None),
         profile=profile,
-        source=object(),
+        source=cast(Any, object()),
         user_id=8,
     )
 
@@ -109,7 +110,7 @@ async def test_initial_scrape_job_enqueued_on_create(
     )
 
     queued = await scholar_helpers.enqueue_initial_scrape_job_for_scholar(
-        session,
+        cast(Any, session),
         profile=profile,
         user_id=9,
     )
@@ -134,7 +135,7 @@ async def test_initial_scrape_job_not_enqueued_when_disabled(
     )
 
     queued = await scholar_helpers.enqueue_initial_scrape_job_for_scholar(
-        session,
+        cast(Any, session),
         profile=profile,
         user_id=11,
     )

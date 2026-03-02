@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.runtime_deps import get_scholar_source
 from app.main import app
+from app.services.scholar.rate_limit import reset_scholar_rate_limit_state_for_tests
 from app.services.scholar.source import FetchResult
 from app.settings import settings
 from tests.integration.helpers import (
@@ -141,6 +142,7 @@ async def test_api_scholars_search_and_profile_image_management(
         assert candidate["scholar_id"] == "abcDEF123456"
         assert candidate["profile_image_url"] == "https://scholar.google.com/citations/images/avatar_scholar_256.png"
 
+        reset_scholar_rate_limit_state_for_tests()
         create_response = client.post(
             "/api/v1/scholars",
             json={

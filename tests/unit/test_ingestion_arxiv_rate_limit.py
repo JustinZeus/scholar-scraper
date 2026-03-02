@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -38,8 +39,8 @@ async def test_discover_identifiers_for_enrichment_disables_arxiv_on_rate_limit(
     monkeypatch.setattr(runner, "_publish_identifier_update_event", _publish_noop)
 
     result = await runner._discover_identifiers_for_enrichment(
-        object(),
-        publication=publication,
+        cast(Any, object()),
+        publication=cast(Any, publication),
         run_id=321,
         allow_arxiv_lookup=True,
     )

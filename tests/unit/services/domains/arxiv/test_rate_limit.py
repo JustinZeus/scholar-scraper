@@ -16,7 +16,7 @@ from app.settings import settings
 
 
 @pytest.mark.asyncio
-async def test_arxiv_rate_limit_respects_cooldown(db_session: AsyncSession) -> None:
+async def test_arxiv_rate_limit_respects_cooldown(db_session: AsyncSession, patch_session_factory) -> None:
     db_session.add(
         ArxivRuntimeState(
             state_key=ARXIV_RUNTIME_STATE_KEY,
@@ -37,7 +37,7 @@ async def test_arxiv_rate_limit_respects_cooldown(db_session: AsyncSession) -> N
 
 
 @pytest.mark.asyncio
-async def test_arxiv_rate_limit_persists_cooldown_after_429(db_session: AsyncSession) -> None:
+async def test_arxiv_rate_limit_persists_cooldown_after_429(db_session: AsyncSession, patch_session_factory) -> None:
     previous_interval = settings.arxiv_min_interval_seconds
     previous_cooldown = settings.arxiv_rate_limit_cooldown_seconds
     object.__setattr__(settings, "arxiv_min_interval_seconds", 0.0)
@@ -62,7 +62,7 @@ async def test_arxiv_rate_limit_persists_cooldown_after_429(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
-async def test_arxiv_rate_limit_serializes_concurrent_calls(db_session: AsyncSession) -> None:
+async def test_arxiv_rate_limit_serializes_concurrent_calls(db_session: AsyncSession, patch_session_factory) -> None:
     previous_interval = settings.arxiv_min_interval_seconds
     previous_cooldown = settings.arxiv_rate_limit_cooldown_seconds
     object.__setattr__(settings, "arxiv_min_interval_seconds", 0.2)
@@ -90,6 +90,7 @@ async def test_arxiv_rate_limit_serializes_concurrent_calls(db_session: AsyncSes
 async def test_arxiv_rate_limit_logs_request_scheduled_and_completed(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    patch_session_factory,
 ) -> None:
     logged: list[dict[str, object]] = []
 
@@ -107,8 +108,8 @@ async def test_arxiv_rate_limit_logs_request_scheduled_and_completed(
 
     assert scheduled
     assert completed
-    assert float(scheduled[0]["wait_seconds"]) >= 0.0
-    assert int(completed[0]["status_code"]) == 200
+    assert float(str(scheduled[0]["wait_seconds"])) >= 0.0
+    assert int(str(completed[0]["status_code"])) == 200
     assert completed[0]["source_path"] == "search"
 
 
@@ -116,6 +117,7 @@ async def test_arxiv_rate_limit_logs_request_scheduled_and_completed(
 async def test_arxiv_rate_limit_logs_cooldown_activation(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    patch_session_factory,
 ) -> None:
     logged_warning: list[dict[str, object]] = []
     previous_interval = settings.arxiv_min_interval_seconds
@@ -140,11 +142,11 @@ async def test_arxiv_rate_limit_logs_cooldown_activation(
     cooldown_events = [entry for entry in logged_warning if entry.get("event") == "arxiv.cooldown_activated"]
     assert cooldown_events
     assert cooldown_events[0]["source_path"] == "lookup_ids"
-    assert float(cooldown_events[0]["cooldown_remaining_seconds"]) > 0.0
+    assert float(str(cooldown_events[0]["cooldown_remaining_seconds"])) > 0.0
 
 
 @pytest.mark.asyncio
-async def test_get_arxiv_cooldown_status_reads_active_cooldown(db_session: AsyncSession) -> None:
+async def test_get_arxiv_cooldown_status_reads_active_cooldown(db_session: AsyncSession, patch_session_factory) -> None:
     now_utc = datetime(2026, 2, 26, 13, 0, tzinfo=UTC)
     existing = await db_session.get(ArxivRuntimeState, ARXIV_RUNTIME_STATE_KEY)
     if existing is None:

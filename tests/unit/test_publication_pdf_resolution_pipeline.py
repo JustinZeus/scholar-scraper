@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -11,7 +12,7 @@ from app.services.publications import pdf_resolution_pipeline as pipeline
 from app.services.unpaywall.application import OaResolutionOutcome
 
 
-def _row(*, display_identifier: DisplayIdentifier | None = None) -> SimpleNamespace:
+def _row(*, display_identifier: DisplayIdentifier | None = None) -> Any:
     return SimpleNamespace(
         publication_id=1,
         scholar_profile_id=1,

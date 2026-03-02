@@ -33,6 +33,9 @@ class _PassthroughSource:
     async def fetch_profile_page_html(self, scholar_id: str, *, cstart: int, pagesize: int) -> FetchResult:
         return await self.fetch_profile_html(scholar_id)
 
+    async def fetch_author_search_html(self, query: str, *, start: int = 0) -> FetchResult:
+        raise NotImplementedError
+
 
 def _csrf_headers(client: TestClient) -> dict[str, str]:
     response = client.get("/api/v1/auth/me")

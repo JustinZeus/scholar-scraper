@@ -111,8 +111,9 @@ class TestBuildFingerprint:
         assert all(c in "0123456789abcdef" for c in fp)
 
     def test_deterministic(self) -> None:
-        kwargs = {"title": "Test Title", "year": 2024, "author_text": "Smith", "venue_text": "ICML"}
-        assert _build_fingerprint(**kwargs) == _build_fingerprint(**kwargs)
+        fp_a = _build_fingerprint(title="Test Title", year=2024, author_text="Smith", venue_text="ICML")
+        fp_b = _build_fingerprint(title="Test Title", year=2024, author_text="Smith", venue_text="ICML")
+        assert fp_a == fp_b
 
     def test_different_titles_produce_different_fingerprints(self) -> None:
         fp1 = _build_fingerprint(title="Title A", year=2024, author_text=None, venue_text=None)

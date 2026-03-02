@@ -136,7 +136,7 @@ class DataImportRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def unwrap_export_envelope(cls, values: dict) -> dict:  # type: ignore[override]
+    def unwrap_export_envelope(cls, values: dict) -> dict:
         """Accept the full export envelope format (with data/meta wrapper)."""
         if isinstance(values, dict) and "data" in values and isinstance(values["data"], dict):
             return values["data"]

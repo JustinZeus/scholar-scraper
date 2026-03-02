@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 from app.services.portability.publication_import import (
@@ -9,14 +10,14 @@ from app.services.portability.publication_import import (
 )
 
 
-def _mock_profile(scholar_id: str = "ABC123DEF456") -> MagicMock:
+def _mock_profile(scholar_id: str = "ABC123DEF456") -> Any:
     profile = MagicMock()
     profile.id = 1
     profile.scholar_id = scholar_id
     return profile
 
 
-def _scholar_map(scholar_id: str = "ABC123DEF456") -> dict[str, MagicMock]:
+def _scholar_map(scholar_id: str = "ABC123DEF456") -> dict[str, Any]:
     return {scholar_id: _mock_profile(scholar_id)}
 
 

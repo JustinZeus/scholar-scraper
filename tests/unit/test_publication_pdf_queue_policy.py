@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -27,7 +28,7 @@ def _job(
 
 def _row(
     *, pub_url: str | None = "https://scholar.google.com/citations?view_op=view_citation&citation_for_view=abc:xyz"
-) -> SimpleNamespace:
+) -> Any:
     return SimpleNamespace(
         publication_id=1,
         scholar_profile_id=1,
@@ -235,7 +236,7 @@ async def test_run_resolution_task_disables_arxiv_for_remaining_batch(
 ) -> None:
     calls: list[tuple[int, bool]] = []
     first = _row()
-    second = SimpleNamespace(**{**first.__dict__, "publication_id": 2})
+    second: Any = SimpleNamespace(**{**first.__dict__, "publication_id": 2})
 
     def _raise_session_factory_error():
         raise RuntimeError("skip user settings lookup in test")

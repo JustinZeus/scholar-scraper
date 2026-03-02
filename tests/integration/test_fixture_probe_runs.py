@@ -76,6 +76,9 @@ class FixtureScholarSource:
     async def fetch_profile_html(self, scholar_id: str) -> FetchResult:
         return await self.fetch_profile_page_html(scholar_id, cstart=0, pagesize=100)
 
+    async def fetch_author_search_html(self, query: str, *, start: int = 0) -> FetchResult:
+        raise NotImplementedError
+
 
 @pytest.mark.integration
 @pytest.mark.db
