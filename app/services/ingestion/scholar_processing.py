@@ -420,6 +420,7 @@ async def run_scholar_iteration(
             {"visited": visited, "finished": finished, "total": total},
         )
 
+    await _emit()
     first_pass_cstarts = await _run_first_pass(
         db_session,
         scholars=scholars,

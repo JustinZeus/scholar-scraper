@@ -487,9 +487,9 @@ watch(
                     </div>
                     <p class="mt-2 text-sm text-secondary">
                       Started {{ formatDate(displayedLatestRun.start_dt) }}.
-                      <template v-if="runStatus.isLikelyRunning && runStatus.scholarProgress">
-                        {{ runStatus.scholarProgress.visited }} / {{ runStatus.scholarProgress.total }} visited
-                        · {{ runStatus.scholarProgress.finished }} finished
+                      <template v-if="runStatus.isLikelyRunning">
+                        {{ runStatus.scholarProgress?.visited ?? 0 }} / {{ runStatus.scholarProgress?.total ?? '…' }} visited
+                        · {{ runStatus.scholarProgress?.finished ?? 0 }} finished
                         · {{ displayedLatestRun.new_publication_count }} new publications.
                       </template>
                       <template v-else>
