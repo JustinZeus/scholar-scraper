@@ -404,7 +404,7 @@ watch(
                     </div>
                     <div class="flex items-center gap-2">
                       <AppButton
-                        v-if="auth.isAdmin && runStatus.isLikelyRunning"
+                        v-if="runStatus.isLikelyRunning"
                         variant="danger"
                         :disabled="!activeRunId || isCancelAnimating"
                         @click="onCancelRun"
@@ -420,7 +420,6 @@ watch(
                         </span>
                       </AppButton>
                       <AppButton
-                        v-if="auth.isAdmin"
                         :disabled="isStartBlocked"
                         :title="startCheckDisabledReason || undefined"
                         :class="isStartCheckAnimating ? 'shadow-[0_0_0_1px_var(--color-state-info-border)]' : ''"
