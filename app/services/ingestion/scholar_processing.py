@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
 
@@ -274,6 +275,7 @@ async def _run_first_pass(
     request_delay_seconds: int,
     queue_delay_seconds: int,
     progress: RunProgress,
+    on_progress: Callable[[int, int], Coroutine[Any, Any, None]] | None = None,
 ) -> dict[int, int]:
     first_pass_cstarts: dict[int, int] = {}
     for index, scholar in enumerate(scholars):
@@ -310,6 +312,8 @@ async def _run_first_pass(
                 scholars_remaining=len(scholars) - index - 1,
             )
             return first_pass_cstarts
+        if on_progress is not None:
+            await on_progress(1, 0)
         resume_cstart = outcome.result_entry.get("continuation_cstart")
         if resume_cstart is not None and int(resume_cstart) > start_cstart:
             first_pass_cstarts[int(scholar.id)] = int(resume_cstart)
@@ -330,6 +334,7 @@ async def _run_depth_pass(
     auto_queue_continuations: bool,
     queue_delay_seconds: int,
     progress: RunProgress,
+    on_progress: Callable[[int, int], Coroutine[Any, Any, None]] | None = None,
 ) -> None:
     for index, scholar in enumerate(scholars):
         resume_cstart = first_pass_cstarts.get(int(scholar.id))
@@ -367,6 +372,8 @@ async def _run_depth_pass(
                 scholars_remaining=len(scholars) - index - 1,
             )
             break
+        if on_progress is not None:
+            await on_progress(0, 1)
 
 
 async def run_scholar_iteration(
@@ -387,6 +394,8 @@ async def run_scholar_iteration(
     auto_queue_continuations: bool,
     queue_delay_seconds: int,
 ) -> RunProgress:
+    from app.services.runs.events import run_events
+
     progress = RunProgress()
     scholar_kwargs: dict[str, Any] = {
         "request_delay_seconds": request_delay_seconds,
@@ -396,6 +405,21 @@ async def run_scholar_iteration(
         "rate_limit_backoff_seconds": rate_limit_backoff_seconds,
         "page_size": page_size,
     }
+
+    visited = 0
+    finished = 0
+    total = len(scholars)
+
+    async def _emit(v: int = 0, f: int = 0) -> None:
+        nonlocal visited, finished
+        visited += v
+        finished += f
+        await run_events.publish(
+            run.id,
+            "scholar_progress",
+            {"visited": visited, "finished": finished, "total": total},
+        )
+
     first_pass_cstarts = await _run_first_pass(
         db_session,
         scholars=scholars,
@@ -407,8 +431,12 @@ async def run_scholar_iteration(
         request_delay_seconds=request_delay_seconds,
         queue_delay_seconds=queue_delay_seconds,
         progress=progress,
+        on_progress=_emit,
     )
     remaining_max = max(max_pages_per_scholar - 1, 0)
+    scholars_finished_in_first_pass = len(scholars) - len(first_pass_cstarts)
+    if scholars_finished_in_first_pass > 0:
+        await _emit(f=scholars_finished_in_first_pass)
     if remaining_max <= 0:
         return progress
     await _run_depth_pass(
@@ -424,5 +452,6 @@ async def run_scholar_iteration(
         auto_queue_continuations=auto_queue_continuations,
         queue_delay_seconds=queue_delay_seconds,
         progress=progress,
+        on_progress=_emit,
     )
     return progress

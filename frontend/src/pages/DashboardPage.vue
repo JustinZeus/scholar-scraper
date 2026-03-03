@@ -486,9 +486,16 @@ watch(
                       </RouterLink>
                     </div>
                     <p class="mt-2 text-sm text-secondary">
-                      Started {{ formatDate(displayedLatestRun.start_dt) }}. Processed
-                      {{ displayedLatestRun.scholar_count }} scholars and discovered
-                      {{ displayedLatestRun.new_publication_count }} new publications.
+                      Started {{ formatDate(displayedLatestRun.start_dt) }}.
+                      <template v-if="runStatus.isLikelyRunning && runStatus.scholarProgress">
+                        {{ runStatus.scholarProgress.visited }} / {{ runStatus.scholarProgress.total }} visited
+                        · {{ runStatus.scholarProgress.finished }} finished
+                        · {{ displayedLatestRun.new_publication_count }} new publications.
+                      </template>
+                      <template v-else>
+                        Processed {{ displayedLatestRun.scholar_count }} scholars and discovered
+                        {{ displayedLatestRun.new_publication_count }} new publications.
+                      </template>
                     </p>
                   </div>
                   <AppEmptyState

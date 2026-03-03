@@ -168,6 +168,7 @@ export const useRunStatusStore = defineStore("runStatus", {
     lastErrorRequestId: null as string | null,
     lastSyncAt: null as number | null,
     livePublications: [] as Array<PublicationItem>,
+    scholarProgress: null as { visited: number; finished: number; total: number } | null,
   }),
   getters: {
     isRunActive(state): boolean {
@@ -257,6 +258,7 @@ export const useRunStatusStore = defineStore("runStatus", {
         }
         activeStreamRunId = targetRunId;
         this.livePublications = [];
+        this.scholarProgress = null;
         eventSource = new EventSource(`/api/v1/runs/${targetRunId}/stream`);
         eventSource.addEventListener("publication_discovered", (e) => {
           try {
@@ -308,6 +310,19 @@ export const useRunStatusStore = defineStore("runStatus", {
                 displayIdentifier,
               },
             );
+          } catch (err) {
+            console.error("Failed to parse SSE event", err);
+          }
+        });
+        eventSource.addEventListener("scholar_progress", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            const visited = typeof data.visited === "number" ? Math.max(0, Math.trunc(data.visited)) : null;
+            const finished = typeof data.finished === "number" ? Math.max(0, Math.trunc(data.finished)) : null;
+            const total = typeof data.total === "number" ? Math.max(1, Math.trunc(data.total)) : null;
+            if (visited !== null && finished !== null && total !== null) {
+              this.scholarProgress = { visited, finished, total };
+            }
           } catch (err) {
             console.error("Failed to parse SSE event", err);
           }
@@ -491,6 +506,7 @@ export const useRunStatusStore = defineStore("runStatus", {
       this.lastSyncAt = null;
       this.safetyState = createDefaultSafetyState();
       this.livePublications = [];
+      this.scholarProgress = null;
     },
   },
 });
