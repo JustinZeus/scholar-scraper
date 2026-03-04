@@ -47,7 +47,7 @@ const savingScholarHttp = ref(false);
 const updatingPassword = ref(false);
 
 const autoRunEnabled = ref(false);
-const runIntervalMinutes = ref("60");
+const runIntervalHours = ref("1");
 const requestDelaySeconds = ref("2");
 const navVisiblePages = ref<string[]>([]);
 const openalexApiKey = ref("");
@@ -77,13 +77,13 @@ const tabItems = computed<AppTabItem[]>(() => {
   const tabs: AppTabItem[] = [
     { id: TAB_CHECKING, label: "Checking" },
     { id: TAB_ACCOUNT, label: "Account" },
+    { id: TAB_ADMIN_PDF, label: "PDF Queue" },
   ];
   if (auth.isAdmin) {
     tabs.push(
       { id: TAB_ADMIN_USERS, label: "Users" },
       { id: TAB_ADMIN_INTEGRITY, label: "Integrity" },
       { id: TAB_ADMIN_REPAIRS, label: "Repairs" },
-      { id: TAB_ADMIN_PDF, label: "PDF Queue" },
       { id: TAB_ADMIN_INTEGRATIONS, label: "Integrations" },
     );
   }
@@ -138,7 +138,7 @@ function hydrateSettings(settings: UserSettings): void {
   manualRunAllowed.value = Boolean(settings.policy?.manual_run_allowed ?? true);
 
   autoRunEnabled.value = Boolean(settings.auto_run_enabled) && automationAllowed.value;
-  runIntervalMinutes.value = String(settings.run_interval_minutes);
+  runIntervalHours.value = String(Number(settings.run_interval_minutes) / 60);
   requestDelaySeconds.value = String(settings.request_delay_seconds);
   navVisiblePages.value = normalizeUserNavVisiblePages(settings.nav_visible_pages);
 
@@ -166,6 +166,18 @@ function parseBoundedInteger(value: string, label: string, minimum: number): num
     throw new Error(`${label} must be at least ${minimum}.`);
   }
   return parsed;
+}
+
+function parseHoursToMinutes(value: string, minMinutes: number): number {
+  const hours = Number(value);
+  if (!Number.isFinite(hours) || hours <= 0) {
+    throw new Error("Check interval must be a positive number of hours.");
+  }
+  const minutes = Math.round(hours * 60);
+  if (minutes < minMinutes) {
+    throw new Error(`Check interval must be at least ${minMinutes / 60} hours.`);
+  }
+  return minutes;
 }
 
 async function loadSettings(): Promise<void> {
@@ -225,9 +237,8 @@ async function onSaveSettings(): Promise<void> {
   try {
     const payload: UserSettingsUpdate = {
       auto_run_enabled: autoRunEnabled.value,
-      run_interval_minutes: parseBoundedInteger(
-        runIntervalMinutes.value,
-        "Check interval (minutes)",
+      run_interval_minutes: parseHoursToMinutes(
+        runIntervalHours.value,
         minCheckIntervalMinutes.value,
       ),
       request_delay_seconds: parseBoundedInteger(
@@ -357,11 +368,11 @@ onMounted(async () => {
 
             <label class="grid gap-2 text-sm font-medium text-ink-secondary">
               <span class="inline-flex items-center gap-1">
-                Check interval (minutes)
+                Check interval (hours)
                 <AppHelpHint text="Minimum is controlled by server policy." />
               </span>
-              <AppInput v-model="runIntervalMinutes" inputmode="numeric" />
-              <span class="text-xs text-secondary">Minimum: {{ minCheckIntervalMinutes }}</span>
+              <AppInput v-model="runIntervalHours" inputmode="decimal" />
+              <span class="text-xs text-secondary">Minimum: {{ minCheckIntervalMinutes / 60 }} hours</span>
             </label>
 
             <label class="grid gap-2 text-sm font-medium text-ink-secondary">

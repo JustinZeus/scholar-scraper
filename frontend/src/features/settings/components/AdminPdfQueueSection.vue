@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useAuthStore } from "@/stores/auth";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
@@ -17,6 +18,7 @@ import {
 import { useRequestState } from "@/composables/useRequestState";
 
 const { errorMessage, errorRequestId, successMessage, clearAlerts, assignError, setSuccess } = useRequestState();
+const auth = useAuthStore();
 
 const refreshingPdfQueue = ref(false);
 const requeueingPublicationId = ref<number | null>(null);
@@ -162,7 +164,7 @@ defineExpose({ load });
           <option value="50">50 / page</option>
           <option value="100">100 / page</option>
         </AppSelect>
-        <AppButton variant="secondary" class="!min-h-8 whitespace-nowrap !px-2.5 !py-1 !text-xs" :disabled="requeueingAllPdfs" title="Queue all missing PDFs" @click="onRequeueAllPdfs">
+        <AppButton v-if="auth.isAdmin" variant="secondary" class="!min-h-8 whitespace-nowrap !px-2.5 !py-1 !text-xs" :disabled="requeueingAllPdfs" title="Queue all missing PDFs" @click="onRequeueAllPdfs">
           {{ requeueingAllPdfs ? "Queueing..." : "Queue all" }}
         </AppButton>
         <AppRefreshButton variant="secondary" size="sm" :loading="refreshingPdfQueue" title="Refresh PDF queue" loading-title="Refreshing PDF queue" @click="refreshPdfQueue" />
@@ -194,7 +196,7 @@ defineExpose({ load });
           <td>{{ formatTimestamp(item.last_attempt_at) }}</td>
           <td>{{ formatTimestamp(item.resolved_at) }}</td>
           <td>
-            <AppButton variant="ghost" :disabled="requeueingPublicationId === item.publication_id || !canRequeuePdf(item)" @click="onRequeuePdf(item)">
+            <AppButton v-if="auth.isAdmin" variant="ghost" :disabled="requeueingPublicationId === item.publication_id || !canRequeuePdf(item)" @click="onRequeuePdf(item)">
               {{ requeueingPublicationId === item.publication_id ? "Requeueing..." : "Requeue" }}
             </AppButton>
           </td>

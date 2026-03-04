@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { onMounted, watch } from "vue";
+import { ref } from "vue";
 
-import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
 import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import AdminIntegritySection from "@/features/settings/components/AdminIntegritySection.vue";
 import AdminPdfQueueSection from "@/features/settings/components/AdminPdfQueueSection.vue";
@@ -18,7 +18,6 @@ const props = defineProps<{
   section: "users" | "integrity" | "repairs" | "pdf";
 }>();
 
-const loading = ref(true);
 const { errorMessage, errorRequestId, successMessage, clearAlerts, assignError } = useRequestState();
 
 const usersRef = ref<InstanceType<typeof AdminUsersSection> | null>(null);
@@ -26,34 +25,21 @@ const integrityRef = ref<InstanceType<typeof AdminIntegritySection> | null>(null
 const repairsRef = ref<InstanceType<typeof AdminRepairsSection> | null>(null);
 const pdfQueueRef = ref<InstanceType<typeof AdminPdfQueueSection> | null>(null);
 
-async function refreshForSection(): Promise<void> {
-  if (props.section === SECTION_USERS && usersRef.value) {
-    await usersRef.value.load();
-    return;
-  }
-  if (props.section === SECTION_INTEGRITY && integrityRef.value) {
-    await integrityRef.value.load();
-    return;
-  }
-  if (props.section === SECTION_REPAIRS) {
-    await usersRef.value?.load();
-    await repairsRef.value?.load();
-    return;
-  }
-  if (props.section === SECTION_PDF && pdfQueueRef.value) {
-    await pdfQueueRef.value.load();
-  }
-}
-
 async function loadSection(): Promise<void> {
-  loading.value = true;
   clearAlerts();
   try {
-    await refreshForSection();
+    if (props.section === SECTION_USERS && usersRef.value) {
+      await usersRef.value.load();
+    } else if (props.section === SECTION_INTEGRITY && integrityRef.value) {
+      await integrityRef.value.load();
+    } else if (props.section === SECTION_REPAIRS) {
+      await usersRef.value?.load();
+      await repairsRef.value?.load();
+    } else if (props.section === SECTION_PDF && pdfQueueRef.value) {
+      await pdfQueueRef.value.load();
+    }
   } catch (error) {
     assignError(error, "Unable to load admin data.");
-  } finally {
-    loading.value = false;
   }
 }
 
@@ -72,11 +58,9 @@ watch(() => props.section, loadSection);
       @dismiss-success="successMessage = null"
     />
 
-    <AsyncStateGate :loading="loading" :loading-lines="10" :show-empty="false">
-      <AdminUsersSection v-if="props.section === SECTION_USERS || props.section === SECTION_REPAIRS" v-show="props.section === SECTION_USERS" ref="usersRef" />
-      <AdminIntegritySection v-if="props.section === SECTION_INTEGRITY" ref="integrityRef" />
-      <AdminRepairsSection v-if="props.section === SECTION_REPAIRS" ref="repairsRef" :users="usersRef?.users ?? []" />
-      <AdminPdfQueueSection v-if="props.section === SECTION_PDF" ref="pdfQueueRef" />
-    </AsyncStateGate>
+    <AdminUsersSection v-if="props.section === SECTION_USERS || props.section === SECTION_REPAIRS" v-show="props.section === SECTION_USERS" ref="usersRef" />
+    <AdminIntegritySection v-if="props.section === SECTION_INTEGRITY" ref="integrityRef" />
+    <AdminRepairsSection v-if="props.section === SECTION_REPAIRS" ref="repairsRef" :users="usersRef?.users ?? []" />
+    <AdminPdfQueueSection v-if="props.section === SECTION_PDF" ref="pdfQueueRef" />
   </section>
 </template>
