@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, Path, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_api_admin_user
+from app.api.deps import get_api_admin_user, get_api_current_user
 from app.api.errors import ApiException
 from app.api.responses import success_payload
 from app.api.schemas import (
@@ -185,7 +185,7 @@ async def get_pdf_queue(
     offset: int | None = Query(default=None, ge=0),
     status: str | None = Query(default=None),
     db_session: AsyncSession = Depends(get_db_session),
-    admin_user: User = Depends(get_api_admin_user),
+    current_user: User = Depends(get_api_current_user),
 ):
     normalized_status = (status or "").strip().lower() or None
     resolved_page, resolved_limit, resolved_offset = _resolve_pdf_queue_paging(
@@ -204,7 +204,7 @@ async def get_pdf_queue(
         logger,
         "info",
         "api.admin.db.pdf_queue_listed",
-        admin_user_id=int(admin_user.id),
+        user_id=int(current_user.id),
         page=int(resolved_page),
         page_size=int(resolved_limit),
         offset=int(resolved_offset),
