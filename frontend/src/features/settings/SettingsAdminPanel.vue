@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, watch } from "vue";
+import { nextTick, onMounted, watch } from "vue";
 import { ref } from "vue";
 
 import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
@@ -43,8 +43,10 @@ async function loadSection(): Promise<void> {
   }
 }
 
-onMounted(loadSection);
-watch(() => props.section, loadSection);
+onMounted(() => {
+  nextTick(loadSection);
+});
+watch(() => props.section, loadSection, { flush: "post" });
 </script>
 
 <template>

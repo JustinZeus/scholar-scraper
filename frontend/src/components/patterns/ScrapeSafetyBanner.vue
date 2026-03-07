@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import AppAlert from "@/components/ui/AppAlert.vue";
+import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import {
   formatCooldownCountdown,
   type ScrapeSafetyState,
@@ -79,6 +80,10 @@ const actionText = computed(() => {
   return props.safetyState.recommended_action;
 });
 
+const bannerHintText = computed(() => {
+  return "Google Scholar rate-limits automated requests. The cooldown pauses scraping to avoid your IP being blocked.";
+});
+
 onMounted(() => {
   timer = setInterval(() => {
     now.value = Date.now();
@@ -95,7 +100,12 @@ onBeforeUnmount(() => {
 
 <template>
   <AppAlert v-if="isVisible" :tone="tone">
-    <template #title>{{ title }}</template>
+    <template #title>
+      <span class="inline-flex items-center gap-1">
+        {{ title }}
+        <AppHelpHint :text="bannerHintText" />
+      </span>
+    </template>
     <p>{{ detailText }}</p>
     <p v-if="actionText" class="text-secondary">{{ actionText }}</p>
   </AppAlert>
