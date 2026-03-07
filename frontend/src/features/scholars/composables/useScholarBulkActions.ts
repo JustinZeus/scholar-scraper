@@ -6,7 +6,6 @@ import {
   exportScholarData,
   type ScholarProfile,
 } from "@/features/scholars";
-import { ApiRequestError } from "@/lib/api/errors";
 
 export type ScholarBulkAction =
   | "delete_selected"
@@ -19,6 +18,14 @@ export type ScholarBulkAction =
 export interface ScholarBulkActionOption {
   value: ScholarBulkAction;
   label: string;
+}
+
+export interface ConfirmState {
+  open: boolean;
+  title: string;
+  message: string;
+  variant: "danger" | "default";
+  onConfirm: () => void;
 }
 
 export interface BulkActionCallbacks {
@@ -35,6 +42,7 @@ export function useScholarBulkActions(
   const selectedIds = ref<Set<number>>(new Set());
   const bulkAction = ref<ScholarBulkAction>("select_all");
   const bulkBusy = ref(false);
+  const confirmState = ref<ConfirmState>({ open: false, title: "", message: "", variant: "default", onConfirm: () => {} });
 
   const selectedCount = computed(() => selectedIds.value.size);
   const hasSelection = computed(() => selectedCount.value > 0);
@@ -128,21 +136,36 @@ export function useScholarBulkActions(
     if (bulkAction.value === "export_selected") { await onBulkExport(); return; }
   }
 
-  async function onBulkDelete(): Promise<void> {
+  function dismissConfirm(): void {
+    confirmState.value = { ...confirmState.value, open: false };
+  }
+
+  function requestConfirm(title: string, message: string, variant: "danger" | "default", onConfirm: () => void): void {
+    confirmState.value = { open: true, title, message, variant, onConfirm };
+  }
+
+  function onBulkDelete(): void {
     const ids = [...selectedIds.value];
-    if (!window.confirm(`Delete ${ids.length} scholar(s)? This removes all linked publications and queue data.`)) return;
-    bulkBusy.value = true;
-    callbacks.clearMessages();
-    try {
-      const result = await bulkDeleteScholars(ids);
-      callbacks.setSuccess(`${result.deleted_count} scholar(s) deleted.`);
-      selectedIds.value = new Set();
-      await callbacks.reloadScholars();
-    } catch (error) {
-      callbacks.assignError(error, "Unable to bulk delete scholars.");
-    } finally {
-      bulkBusy.value = false;
-    }
+    requestConfirm(
+      `Delete ${ids.length} scholar(s)?`,
+      "This removes all linked publications and queue data. This action cannot be undone.",
+      "danger",
+      async () => {
+        dismissConfirm();
+        bulkBusy.value = true;
+        callbacks.clearMessages();
+        try {
+          const result = await bulkDeleteScholars(ids);
+          callbacks.setSuccess(`${result.deleted_count} scholar(s) deleted.`);
+          selectedIds.value = new Set();
+          await callbacks.reloadScholars();
+        } catch (error) {
+          callbacks.assignError(error, "Unable to bulk delete scholars.");
+        } finally {
+          bulkBusy.value = false;
+        }
+      },
+    );
   }
 
   async function onBulkToggle(isEnabled: boolean): Promise<void> {
@@ -188,6 +211,9 @@ export function useScholarBulkActions(
     bulkActionOptions,
     bulkApplyLabel,
     bulkApplyDisabled,
+    confirmState,
+    dismissConfirm,
+    requestConfirm,
     onToggleAll,
     onToggleRow,
     onApplyBulkAction,

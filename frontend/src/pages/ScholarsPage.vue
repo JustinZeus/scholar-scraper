@@ -6,6 +6,7 @@ import AsyncStateGate from "@/components/patterns/AsyncStateGate.vue";
 import RequestStateAlerts from "@/components/patterns/RequestStateAlerts.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
+import AppConfirmModal from "@/components/ui/AppConfirmModal.vue";
 import AppEmptyState from "@/components/ui/AppEmptyState.vue";
 import AppHelpHint from "@/components/ui/AppHelpHint.vue";
 import AppInput from "@/components/ui/AppInput.vue";
@@ -272,23 +273,30 @@ async function onToggleScholar(): Promise<void> {
   }
 }
 
-async function onDeleteScholar(): Promise<void> {
+function onDeleteScholar(): void {
   const profile = activeScholarSettings.value;
   if (!profile) return;
   const label = scholarLabel(profile);
-  if (!window.confirm(`Delete scholar ${label}? This removes all linked publications and queue data.`)) return;
-  activeScholarId.value = profile.id;
-  clearMessages();
-  try {
-    await deleteScholar(profile.id);
-    successMessage.value = `${label} deleted.`;
-    activeScholarSettingsId.value = null;
-    await loadScholars();
-  } catch (error) {
-    assignError(error, "Unable to delete scholar.");
-  } finally {
-    activeScholarId.value = null;
-  }
+  bulk.requestConfirm(
+    `Delete ${label}?`,
+    "This removes all linked publications and queue data. This action cannot be undone.",
+    "danger",
+    async () => {
+      bulk.dismissConfirm();
+      activeScholarId.value = profile.id;
+      clearMessages();
+      try {
+        await deleteScholar(profile.id);
+        successMessage.value = `${label} deleted.`;
+        activeScholarSettingsId.value = null;
+        await loadScholars();
+      } catch (error) {
+        assignError(error, "Unable to delete scholar.");
+      } finally {
+        activeScholarId.value = null;
+      }
+    },
+  );
 }
 
 async function onSaveImageUrl(): Promise<void> {
@@ -596,6 +604,16 @@ watch(
       @reset-image="onResetImage"
       @toggle="onToggleScholar"
       @delete="onDeleteScholar"
+    />
+
+    <AppConfirmModal
+      :open="bulk.confirmState.value.open"
+      :title="bulk.confirmState.value.title"
+      :message="bulk.confirmState.value.message"
+      :variant="bulk.confirmState.value.variant"
+      confirm-label="Delete"
+      @confirm="bulk.confirmState.value.onConfirm()"
+      @cancel="bulk.dismissConfirm()"
     />
   </AppPage>
 </template>

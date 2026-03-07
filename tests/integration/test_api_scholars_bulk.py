@@ -138,3 +138,33 @@ async def test_export_with_ids_filter(db_session: AsyncSession) -> None:
     resp_all = client.get("/api/v1/scholars/export")
     assert resp_all.status_code == 200
     assert len(resp_all.json()["data"]["scholars"]) == 2
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_bulk_delete_rejects_without_csrf(db_session: AsyncSession) -> None:
+    await insert_user(db_session, email="csrf-bulk-del@example.com", password="pw123456")
+    client = TestClient(app)
+    login_user(client, email="csrf-bulk-del@example.com", password="pw123456")
+    response = client.post(
+        "/api/v1/scholars/bulk-delete",
+        json={"scholar_profile_ids": [1]},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "csrf_invalid"
+
+
+@pytest.mark.integration
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_bulk_toggle_rejects_without_csrf(db_session: AsyncSession) -> None:
+    await insert_user(db_session, email="csrf-bulk-tog@example.com", password="pw123456")
+    client = TestClient(app)
+    login_user(client, email="csrf-bulk-tog@example.com", password="pw123456")
+    response = client.post(
+        "/api/v1/scholars/bulk-toggle",
+        json={"scholar_profile_ids": [1], "is_enabled": False},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "csrf_invalid"

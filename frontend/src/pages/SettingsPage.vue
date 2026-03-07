@@ -168,6 +168,11 @@ function parseBoundedInteger(value: string, label: string, minimum: number): num
   return parsed;
 }
 
+function formatHours(minutes: number): string {
+  const h = minutes / 60;
+  return Number.isInteger(h) ? String(h) : h.toFixed(2).replace(/\.?0+$/, "");
+}
+
 function parseHoursToMinutes(value: string, minMinutes: number): number {
   const hours = Number(value);
   if (!Number.isFinite(hours) || hours <= 0) {
@@ -175,7 +180,7 @@ function parseHoursToMinutes(value: string, minMinutes: number): number {
   }
   const minutes = Math.round(hours * 60);
   if (minutes < minMinutes) {
-    throw new Error(`Check interval must be at least ${minMinutes / 60} hours.`);
+    throw new Error(`Check interval must be at least ${formatHours(minMinutes)} hours.`);
   }
   return minutes;
 }
@@ -372,7 +377,7 @@ onMounted(async () => {
                 <AppHelpHint text="Minimum is controlled by server policy." />
               </span>
               <AppInput v-model="runIntervalHours" inputmode="decimal" />
-              <span class="text-xs text-secondary">Minimum: {{ minCheckIntervalMinutes / 60 }} hours</span>
+              <span class="text-xs text-secondary">Minimum: {{ formatHours(minCheckIntervalMinutes) }} hours</span>
             </label>
 
             <label class="grid gap-2 text-sm font-medium text-ink-secondary">

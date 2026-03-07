@@ -109,4 +109,40 @@ describe("useScholarBulkActions", () => {
     await bulk.onApplyBulkAction();
     expect(bulk.selectedIds.value.size).toBe(0);
   });
+
+  it("bulk delete calls assignError on network failure", async () => {
+    const { bulkDeleteScholars } = await import("@/features/scholars");
+    vi.mocked(bulkDeleteScholars).mockRejectedValueOnce(new Error("Network error"));
+
+    const { bulk, callbacks } = setup([makeProfile(1, "Alice")]);
+    bulk.onToggleRow(1, { target: { checked: true } } as unknown as Event);
+    bulk.bulkAction.value = "delete_selected" as ScholarBulkAction;
+    await bulk.onApplyBulkAction();
+
+    // Trigger the confirm callback
+    expect(bulk.confirmState.value.open).toBe(true);
+    await bulk.confirmState.value.onConfirm();
+
+    expect(callbacks.assignError).toHaveBeenCalledWith(
+      expect.any(Error),
+      "Unable to bulk delete scholars.",
+    );
+    expect(bulk.bulkBusy.value).toBe(false);
+  });
+
+  it("bulk toggle calls assignError on network failure", async () => {
+    const { bulkToggleScholars } = await import("@/features/scholars");
+    vi.mocked(bulkToggleScholars).mockRejectedValueOnce(new Error("Network error"));
+
+    const { bulk, callbacks } = setup([makeProfile(1, "Alice")]);
+    bulk.onToggleRow(1, { target: { checked: true } } as unknown as Event);
+    bulk.bulkAction.value = "enable_selected" as ScholarBulkAction;
+    await bulk.onApplyBulkAction();
+
+    expect(callbacks.assignError).toHaveBeenCalledWith(
+      expect.any(Error),
+      "Unable to bulk enable scholars.",
+    );
+    expect(bulk.bulkBusy.value).toBe(false);
+  });
 });

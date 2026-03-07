@@ -25,7 +25,10 @@ const integrityRef = ref<InstanceType<typeof AdminIntegritySection> | null>(null
 const repairsRef = ref<InstanceType<typeof AdminRepairsSection> | null>(null);
 const pdfQueueRef = ref<InstanceType<typeof AdminPdfQueueSection> | null>(null);
 
+let loadGeneration = 0;
+
 async function loadSection(): Promise<void> {
+  const gen = ++loadGeneration;
   clearAlerts();
   try {
     if (props.section === SECTION_USERS && usersRef.value) {
@@ -34,11 +37,13 @@ async function loadSection(): Promise<void> {
       await integrityRef.value.load();
     } else if (props.section === SECTION_REPAIRS) {
       await usersRef.value?.load();
+      if (gen !== loadGeneration) return;
       await repairsRef.value?.load();
     } else if (props.section === SECTION_PDF && pdfQueueRef.value) {
       await pdfQueueRef.value.load();
     }
   } catch (error) {
+    if (gen !== loadGeneration) return;
     assignError(error, "Unable to load admin data.");
   }
 }

@@ -53,12 +53,12 @@ def _parse_ids_param(ids: str | None) -> list[int] | None:
         return None
     try:
         return [int(p) for p in parts]
-    except ValueError:
+    except ValueError as exc:
         raise ApiException(
             status_code=400,
             code="invalid_ids_param",
             message="The 'ids' parameter must be a comma-separated list of integers.",
-        )
+        ) from exc
 
 
 @router.get(
