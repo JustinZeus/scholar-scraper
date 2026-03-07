@@ -160,8 +160,30 @@ export async function clearScholarImage(
   return response.data;
 }
 
-export async function exportScholarData(): Promise<DataExportPayload> {
-  const response = await apiRequest<DataExportPayload>("/scholars/export", {
+export interface BulkCountResult {
+  deleted_count: number;
+  updated_count: number;
+}
+
+export async function bulkDeleteScholars(scholarProfileIds: number[]): Promise<BulkCountResult> {
+  const response = await apiRequest<BulkCountResult>("/scholars/bulk-delete", {
+    method: "POST",
+    body: { scholar_profile_ids: scholarProfileIds },
+  });
+  return response.data;
+}
+
+export async function bulkToggleScholars(scholarProfileIds: number[], isEnabled: boolean): Promise<BulkCountResult> {
+  const response = await apiRequest<BulkCountResult>("/scholars/bulk-toggle", {
+    method: "POST",
+    body: { scholar_profile_ids: scholarProfileIds, is_enabled: isEnabled },
+  });
+  return response.data;
+}
+
+export async function exportScholarData(ids?: number[]): Promise<DataExportPayload> {
+  const params = ids && ids.length > 0 ? `?ids=${ids.join(",")}` : "";
+  const response = await apiRequest<DataExportPayload>(`/scholars/export${params}`, {
     method: "GET",
   });
   return response.data;

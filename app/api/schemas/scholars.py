@@ -126,6 +126,33 @@ class DataExportEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ScholarBulkIdsRequest(BaseModel):
+    scholar_profile_ids: list[int] = Field(..., min_length=1, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScholarBulkToggleRequest(BaseModel):
+    scholar_profile_ids: list[int] = Field(..., min_length=1, max_length=500)
+    is_enabled: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScholarBulkCountData(BaseModel):
+    deleted_count: int = 0
+    updated_count: int = 0
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScholarBulkCountEnvelope(BaseModel):
+    data: ScholarBulkCountData
+    meta: ApiMeta
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DataImportRequest(BaseModel):
     schema_version: int | None = None
     exported_at: str | None = None
