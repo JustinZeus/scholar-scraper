@@ -340,10 +340,11 @@ async def test_api_admin_dbops_forbidden_for_non_admin_and_validates_scope(db_se
     assert forbidden_integrity.status_code == 403
     assert forbidden_integrity.json()["error"]["code"] == "forbidden"
 
-    forbidden_pdf_queue = client.get("/api/v1/admin/db/pdf-queue")
-    assert forbidden_pdf_queue.status_code == 403
-    assert forbidden_pdf_queue.json()["error"]["code"] == "forbidden"
+    # PDF queue listing is accessible to all authenticated users (not admin-only).
+    allowed_pdf_queue = client.get("/api/v1/admin/db/pdf-queue")
+    assert allowed_pdf_queue.status_code == 200
 
+    # But requeue actions still require admin.
     forbidden_requeue = client.post(
         "/api/v1/admin/db/pdf-queue/1/requeue",
         headers=headers,

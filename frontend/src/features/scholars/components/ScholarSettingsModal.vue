@@ -51,7 +51,7 @@ function scholarPublicationsRoute(profile: ScholarProfile): { name: string; quer
             {{ scholarLabel(scholar) }}
             <span
               v-if="!scholar.baseline_completed"
-              class="ml-1.5 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-950 dark:text-amber-400 dark:ring-amber-400/20"
+              class="ml-1.5 inline-flex items-center rounded-full border border-state-warning-border bg-state-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-state-warning-text"
               title="This scholar hasn't been scraped yet. Publications will appear after the next run."
             >Pending</span>
           </p>
