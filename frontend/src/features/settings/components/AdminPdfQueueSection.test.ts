@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
+import { setActivePinia, createPinia } from "pinia";
+import { useAuthStore } from "@/stores/auth";
 import AdminPdfQueueSection from "./AdminPdfQueueSection.vue";
 
 vi.mock("@/features/admin_dbops", () => ({
@@ -36,6 +38,9 @@ function buildQueueItem(overrides: Record<string, unknown> = {}) {
 
 describe("AdminPdfQueueSection", () => {
   beforeEach(() => {
+    setActivePinia(createPinia());
+    const auth = useAuthStore();
+    auth.$patch({ state: "authenticated", user: { id: 1, email: "admin@test.com", is_admin: true, is_active: true } });
     mockedListQueue.mockReset();
   });
 
