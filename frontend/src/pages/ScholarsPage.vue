@@ -27,6 +27,7 @@ import {
   type ScholarProfile,
   type ScholarSearchCandidate,
 } from "@/features/scholars";
+import { useScholarBulkActions } from "@/features/scholars/composables/useScholarBulkActions";
 import ScholarAvatar from "@/features/scholars/components/ScholarAvatar.vue";
 import ScholarBatchAdd from "@/features/scholars/components/ScholarBatchAdd.vue";
 import ScholarNameSearch from "@/features/scholars/components/ScholarNameSearch.vue";
@@ -290,82 +291,44 @@ async function onDeleteScholar(): Promise<void> {
 }
 
 async function onSaveImageUrl(): Promise<void> {
-  const profile = activeScholarSettings.value;
-  if (!profile) return;
-  const candidate = (imageUrlDraftByScholarId.value[profile.id] || "").trim();
-  if (!candidate) { errorMessage.value = "Enter an image URL before saving, or use Reset image."; return; }
-  imageSavingScholarId.value = profile.id;
+  const p = activeScholarSettings.value;
+  if (!p) return;
+  const url = (imageUrlDraftByScholarId.value[p.id] || "").trim();
+  if (!url) { errorMessage.value = "Enter an image URL before saving, or use Reset image."; return; }
+  imageSavingScholarId.value = p.id;
   clearMessages();
-  try {
-    await setScholarImageUrl(profile.id, candidate);
-    successMessage.value = `Image URL updated for ${scholarLabel(profile)}.`;
-    await loadScholars();
-  } catch (error) {
-    assignError(error, "Unable to update scholar image URL.");
-  } finally {
-    imageSavingScholarId.value = null;
-  }
+  try { await setScholarImageUrl(p.id, url); successMessage.value = `Image URL updated for ${scholarLabel(p)}.`; await loadScholars(); }
+  catch (e) { assignError(e, "Unable to update scholar image URL."); }
+  finally { imageSavingScholarId.value = null; }
 }
 
 async function onUploadImage(event: Event): Promise<void> {
-  const profile = activeScholarSettings.value;
-  if (!profile) return;
+  const p = activeScholarSettings.value;
+  if (!p) return;
   const input = event.target as HTMLInputElement | null;
   const file = input?.files?.[0] ?? null;
   if (!file) return;
-  imageUploadingScholarId.value = profile.id;
+  imageUploadingScholarId.value = p.id;
   clearMessages();
-  try {
-    await uploadScholarImage(profile.id, file);
-    successMessage.value = `Uploaded image for ${scholarLabel(profile)}.`;
-    await loadScholars();
-  } catch (error) {
-    assignError(error, "Unable to upload scholar image.");
-  } finally {
-    imageUploadingScholarId.value = null;
-    if (input) input.value = "";
-  }
+  try { await uploadScholarImage(p.id, file); successMessage.value = `Uploaded image for ${scholarLabel(p)}.`; await loadScholars(); }
+  catch (e) { assignError(e, "Unable to upload scholar image."); }
+  finally { imageUploadingScholarId.value = null; if (input) input.value = ""; }
 }
 
 async function onResetImage(): Promise<void> {
-  const profile = activeScholarSettings.value;
-  if (!profile) return;
-  imageSavingScholarId.value = profile.id;
+  const p = activeScholarSettings.value;
+  if (!p) return;
+  imageSavingScholarId.value = p.id;
   clearMessages();
-  try {
-    await clearScholarImage(profile.id);
-    successMessage.value = `Image reset for ${scholarLabel(profile)}.`;
-    await loadScholars();
-  } catch (error) {
-    assignError(error, "Unable to reset scholar image.");
-  } finally {
-    imageSavingScholarId.value = null;
-  }
+  try { await clearScholarImage(p.id); successMessage.value = `Image reset for ${scholarLabel(p)}.`; await loadScholars(); }
+  catch (e) { assignError(e, "Unable to reset scholar image."); }
+  finally { imageSavingScholarId.value = null; }
 }
 
 // --- Import/export ---
 
-function suggestExportFilename(exportedAt: string): string {
-  return `scholarr-export-${exportedAt.slice(0, 10) || "unknown-date"}.json`;
-}
-
-function downloadJsonFile(filename: string, payload: unknown): void {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-function importSummary(result: DataImportResult): string {
-  return (
-    `Import complete. Scholars +${result.scholars_created}` +
-    ` / updated ${result.scholars_updated}; publications +${result.publications_created}` +
-    ` / updated ${result.publications_updated}; links +${result.links_created}` +
-    ` / updated ${result.links_updated}; skipped ${result.skipped_records}.`
-  );
+function importSummary(r: DataImportResult): string {
+  return `Import complete. Scholars +${r.scholars_created} / updated ${r.scholars_updated}; publications +${r.publications_created} / updated ${r.publications_updated}; links +${r.links_created} / updated ${r.links_updated}; skipped ${r.skipped_records}.`;
 }
 
 async function onExportData(): Promise<void> {
@@ -373,17 +336,19 @@ async function onExportData(): Promise<void> {
   clearMessages();
   try {
     const payload = await exportScholarData();
-    downloadJsonFile(suggestExportFilename(payload.exported_at), payload);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `scholarr-export-${payload.exported_at.slice(0, 10) || "unknown-date"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
     successMessage.value = "Export complete.";
   } catch (error) {
     assignError(error, "Unable to export scholars and publications.");
   } finally {
     exportingData.value = false;
   }
-}
-
-function onOpenImportPicker(): void {
-  importFileInput.value?.click();
 }
 
 async function onImportFileSelected(event: Event): Promise<void> {
@@ -395,16 +360,12 @@ async function onImportFileSelected(event: Event): Promise<void> {
   try {
     const raw = await file.text();
     let parsed = JSON.parse(raw);
-    // Accept the full export envelope (with data/meta wrapper)
-    if (parsed?.data && Array.isArray(parsed.data.scholars)) {
-      parsed = parsed.data;
-    }
+    if (parsed?.data && Array.isArray(parsed.data.scholars)) parsed = parsed.data;
     const payload = parsed as DataImportPayload;
     if (!payload || !Array.isArray(payload.scholars) || !Array.isArray(payload.publications)) {
       throw new Error("Invalid import file: expected scholars[] and publications[] arrays.");
     }
-    const result = await importScholarData(payload);
-    successMessage.value = importSummary(result);
+    successMessage.value = importSummary(await importScholarData(payload));
     await loadScholars();
   } catch (error) {
     assignError(error, "Unable to import scholars and publications.");
@@ -413,6 +374,15 @@ async function onImportFileSelected(event: Event): Promise<void> {
     if (input) input.value = "";
   }
 }
+
+// --- Bulk actions ---
+
+const bulk = useScholarBulkActions(visibleScholars, {
+  clearMessages,
+  assignError,
+  setSuccess: (msg: string) => { successMessage.value = msg; },
+  reloadScholars: loadScholars,
+});
 
 // --- Lifecycle ---
 
@@ -471,7 +441,7 @@ watch(
                   <AppButton variant="secondary" :disabled="loading || exportingData" @click="onExportData">
                     {{ exportingData ? "Exporting..." : "Export" }}
                   </AppButton>
-                  <AppButton variant="secondary" :disabled="loading || importingData" @click="onOpenImportPicker">
+                  <AppButton variant="secondary" :disabled="loading || importingData" @click="importFileInput?.click()">
                     {{ importingData ? "Importing..." : "Import" }}
                   </AppButton>
                   <AppRefreshButton variant="secondary" :disabled="saving" :loading="loading" title="Refresh scholars" loading-title="Refreshing scholars" @click="loadScholars" />
@@ -496,6 +466,34 @@ watch(
             </div>
           </div>
 
+          <div class="flex flex-wrap items-center justify-between gap-2 border-t border-stroke-default pt-2">
+            <span class="text-xs text-secondary">
+              {{ trackedCountLabel }}
+              <template v-if="bulk.hasSelection.value"> · {{ bulk.selectedCount.value }} selected</template>
+            </span>
+            <div class="flex items-center gap-1">
+              <label for="scholars-bulk-action" class="sr-only">Bulk action</label>
+              <AppSelect
+                id="scholars-bulk-action"
+                v-model="bulk.bulkAction.value"
+                :disabled="bulk.bulkBusy.value || loading"
+                class="max-w-[14rem] !py-1.5 !text-xs"
+              >
+                <option v-for="option in bulk.bulkActionOptions.value" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </AppSelect>
+              <AppButton
+                variant="secondary"
+                class="h-8 min-h-8 shrink-0 px-2 text-xs"
+                :disabled="bulk.bulkApplyDisabled.value"
+                @click="bulk.onApplyBulkAction"
+              >
+                {{ bulk.bulkApplyLabel.value }}
+              </AppButton>
+            </div>
+          </div>
+
           <div class="min-h-0 flex-1 xl:overflow-hidden">
             <AsyncStateGate :loading="loading" :loading-lines="6" :empty="!hasTrackedScholars" :show-empty="!errorMessage" empty-title="No scholars tracked" empty-body="Add a Scholar ID or URL to start ingestion tracking.">
               <AppEmptyState v-if="!hasVisibleScholars" title="No scholars match this filter" body="Clear or adjust the filter to see tracked scholars." />
@@ -503,6 +501,13 @@ watch(
                 <ul class="flex gap-3 overflow-x-auto p-1 lg:hidden">
                   <li v-for="item in visibleScholars" :key="item.id" class="rounded-xl border border-stroke-default bg-surface-card-muted/70 p-3">
                     <div class="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        class="bulk-check mt-1 shrink-0"
+                        :checked="bulk.selectedIds.value.has(item.id)"
+                        :aria-label="`Select ${scholarLabel(item)}`"
+                        @change="bulk.onToggleRow(item.id, $event)"
+                      />
                       <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
                       <div class="min-w-0 flex-1 space-y-1">
                         <p class="truncate text-sm font-semibold text-ink-primary">{{ scholarLabel(item) }}</p>
@@ -519,12 +524,31 @@ watch(
                   <AppTable class="h-full overflow-y-scroll overscroll-contain" label="Tracked scholars table">
                     <thead>
                       <tr>
+                        <th scope="col" class="w-10">
+                          <input
+                            type="checkbox"
+                            class="bulk-check"
+                            :checked="bulk.allVisibleSelected.value"
+                            :disabled="visibleScholars.length === 0"
+                            aria-label="Select all visible scholars"
+                            @change="bulk.onToggleAll"
+                          />
+                        </th>
                         <th scope="col">Scholar</th>
                         <th scope="col" class="w-[11rem]">Manage</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="item in visibleScholars" :key="item.id">
+                        <td>
+                          <input
+                            type="checkbox"
+                            class="bulk-check"
+                            :checked="bulk.selectedIds.value.has(item.id)"
+                            :aria-label="`Select ${scholarLabel(item)}`"
+                            @change="bulk.onToggleRow(item.id, $event)"
+                          />
+                        </td>
                         <td>
                           <div class="flex items-start gap-3">
                             <ScholarAvatar :label="item.display_name" :scholar-id="item.scholar_id" :image-url="item.profile_image_url" />
@@ -568,3 +592,9 @@ watch(
     />
   </AppPage>
 </template>
+
+<style scoped>
+.bulk-check {
+  @apply h-4 w-4 rounded border-stroke-interactive bg-surface-input text-brand-600 focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-focus-offset;
+}
+</style>

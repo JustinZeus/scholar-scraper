@@ -56,11 +56,14 @@ async def export_user_data(
     db_session: AsyncSession,
     *,
     user_id: int,
+    scholar_profile_ids: list[int] | None = None,
 ) -> dict[str, Any]:
-    scholars_result = await db_session.execute(
-        select(ScholarProfile).where(ScholarProfile.user_id == user_id).order_by(ScholarProfile.id.asc())
-    )
-    publication_result = await db_session.execute(
+    scholar_query = select(ScholarProfile).where(ScholarProfile.user_id == user_id)
+    if scholar_profile_ids:
+        scholar_query = scholar_query.where(ScholarProfile.id.in_(scholar_profile_ids))
+    scholars_result = await db_session.execute(scholar_query.order_by(ScholarProfile.id.asc()))
+
+    pub_query = (
         select(
             ScholarProfile.scholar_id,
             Publication.cluster_id,
@@ -77,8 +80,13 @@ async def export_user_data(
         .join(ScholarPublication, ScholarPublication.scholar_profile_id == ScholarProfile.id)
         .join(Publication, Publication.id == ScholarPublication.publication_id)
         .where(ScholarProfile.user_id == user_id)
-        .order_by(ScholarPublication.created_at.desc(), Publication.id.desc())
     )
+    if scholar_profile_ids:
+        pub_query = pub_query.where(ScholarProfile.id.in_(scholar_profile_ids))
+    publication_result = await db_session.execute(
+        pub_query.order_by(ScholarPublication.created_at.desc(), Publication.id.desc())
+    )
+
     scholars = [_serialize_export_scholar(profile) for profile in scholars_result.scalars().all()]
     publications = [_serialize_export_publication(row) for row in publication_result.all()]
     return {

@@ -23,6 +23,9 @@ from app.api.schemas import (
     DataImportEnvelope,
     DataImportRequest,
     MessageEnvelope,
+    ScholarBulkCountEnvelope,
+    ScholarBulkIdsRequest,
+    ScholarBulkToggleRequest,
     ScholarCreateRequest,
     ScholarEnvelope,
     ScholarImageUrlUpdateRequest,
@@ -40,6 +43,15 @@ from app.settings import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scholars", tags=["api-scholars"])
+
+
+def _parse_ids_param(ids: str | None) -> list[int] | None:
+    if not ids:
+        return None
+    parts = [p.strip() for p in ids.split(",") if p.strip()]
+    if not parts:
+        return None
+    return [int(p) for p in parts]
 
 
 @router.get(
@@ -69,14 +81,68 @@ async def list_scholars(
 )
 async def export_scholars_and_publications(
     request: Request,
+    ids: str | None = Query(None, description="Comma-separated scholar profile IDs to export"),
     db_session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_api_current_user),
 ):
+    scholar_profile_ids = _parse_ids_param(ids)
     data = await import_export_service.export_user_data(
         db_session,
         user_id=current_user.id,
+        scholar_profile_ids=scholar_profile_ids,
     )
     return success_payload(request, data=data)
+
+
+@router.post(
+    "/bulk-delete",
+    response_model=ScholarBulkCountEnvelope,
+)
+async def bulk_delete_scholars(
+    payload: ScholarBulkIdsRequest,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    deleted_count = await scholar_service.bulk_delete_scholars(
+        db_session,
+        user_id=current_user.id,
+        scholar_profile_ids=payload.scholar_profile_ids,
+        upload_dir=settings.scholar_image_upload_dir,
+    )
+    structured_log(
+        logger, "info", "scholars.bulk_delete",
+        user_id=current_user.id,
+        requested_ids=payload.scholar_profile_ids,
+        deleted_count=deleted_count,
+    )
+    return success_payload(request, data={"deleted_count": deleted_count, "updated_count": 0})
+
+
+@router.post(
+    "/bulk-toggle",
+    response_model=ScholarBulkCountEnvelope,
+)
+async def bulk_toggle_scholars(
+    payload: ScholarBulkToggleRequest,
+    request: Request,
+    db_session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_api_current_user),
+):
+    updated_count = await scholar_service.bulk_toggle_scholars(
+        db_session,
+        user_id=current_user.id,
+        scholar_profile_ids=payload.scholar_profile_ids,
+        is_enabled=payload.is_enabled,
+    )
+    structured_log(
+        logger, "info", "scholars.bulk_toggle",
+        user_id=current_user.id,
+        requested_ids=payload.scholar_profile_ids,
+        is_enabled=payload.is_enabled,
+        updated_count=updated_count,
+    )
+    return success_payload(request, data={"deleted_count": 0, "updated_count": updated_count})
 
 
 @router.post(

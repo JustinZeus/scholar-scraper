@@ -27,10 +27,61 @@ from app.services.scholars.validators import (
     validate_scholar_id,
 )
 
+async def bulk_delete_scholars(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_profile_ids: list[int],
+    upload_dir: str | None = None,
+) -> int:
+    from sqlalchemy import select
+
+    result = await db_session.execute(
+        select(ScholarProfile).where(
+            ScholarProfile.id.in_(scholar_profile_ids),
+            ScholarProfile.user_id == user_id,
+        )
+    )
+    profiles = list(result.scalars().all())
+    if not profiles:
+        return 0
+    if upload_dir:
+        upload_root = _ensure_upload_root(upload_dir, create=True)
+        for profile in profiles:
+            _safe_remove_upload(upload_root, profile.profile_image_upload_path)
+    for profile in profiles:
+        await db_session.delete(profile)
+    await db_session.commit()
+    return len(profiles)
+
+
+async def bulk_toggle_scholars(
+    db_session: AsyncSession,
+    *,
+    user_id: int,
+    scholar_profile_ids: list[int],
+    is_enabled: bool,
+) -> int:
+    from sqlalchemy import update
+
+    result = await db_session.execute(
+        update(ScholarProfile)
+        .where(
+            ScholarProfile.id.in_(scholar_profile_ids),
+            ScholarProfile.user_id == user_id,
+        )
+        .values(is_enabled=is_enabled)
+    )
+    await db_session.commit()
+    return result.rowcount  # type: ignore[return-value]
+
+
 __all__ = [
     "SEARCH_COOLDOWN_REASON",
     "SEARCH_DISABLED_REASON",
     "ScholarServiceError",
+    "bulk_delete_scholars",
+    "bulk_toggle_scholars",
     "clear_profile_image_customization",
     "create_scholar_for_user",
     "delete_scholar",
