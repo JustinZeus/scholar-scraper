@@ -27,6 +27,7 @@ from app.services.scholars.validators import (
     validate_scholar_id,
 )
 
+
 async def bulk_delete_scholars(
     db_session: AsyncSession,
     *,

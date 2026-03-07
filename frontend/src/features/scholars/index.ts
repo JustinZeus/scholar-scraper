@@ -182,8 +182,8 @@ export async function bulkToggleScholars(scholarProfileIds: number[], isEnabled:
 }
 
 export async function exportScholarData(ids?: number[]): Promise<DataExportPayload> {
-  const params = ids && ids.length > 0 ? `?ids=${ids.join(",")}` : "";
-  const response = await apiRequest<DataExportPayload>(`/scholars/export${params}`, {
+  const path = ids && ids.length > 0 ? `/scholars/export?ids=${ids.join(",")}` : "/scholars/export";
+  const response = await apiRequest<DataExportPayload>(path, {
     method: "GET",
   });
   return response.data;
