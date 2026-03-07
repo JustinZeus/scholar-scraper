@@ -111,7 +111,9 @@ async def bulk_delete_scholars(
         upload_dir=settings.scholar_image_upload_dir,
     )
     structured_log(
-        logger, "info", "scholars.bulk_delete",
+        logger,
+        "info",
+        "scholars.bulk_delete",
         user_id=current_user.id,
         requested_ids=payload.scholar_profile_ids,
         deleted_count=deleted_count,
@@ -136,7 +138,9 @@ async def bulk_toggle_scholars(
         is_enabled=payload.is_enabled,
     )
     structured_log(
-        logger, "info", "scholars.bulk_toggle",
+        logger,
+        "info",
+        "scholars.bulk_toggle",
         user_id=current_user.id,
         requested_ids=payload.scholar_profile_ids,
         is_enabled=payload.is_enabled,
